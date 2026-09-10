@@ -1,0 +1,696 @@
+<title>AutoAutoAP Setup Guide</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #eef1f0;
+    --surface: #ffffff;
+    --surface-2: #e2e7e5;
+    --ink: #1b222b;
+    --ink-soft: #52606b;
+    --ink-faint: #7c8891;
+    --line: rgba(27, 34, 43, 0.13);
+    --accent: #c98a1f;
+    --accent-ink: #5c3f0c;
+    --accent-soft: rgba(201, 138, 31, 0.14);
+    --mac: #3f6f95;
+    --mac-soft: rgba(63, 111, 149, 0.12);
+    --pc: #3f8a63;
+    --pc-soft: rgba(63, 138, 99, 0.12);
+    --bad: #b3492f;
+    --bad-soft: rgba(179, 73, 47, 0.1);
+    --code-bg: #1b222b;
+    --code-ink: #e7ece7;
+    --code-faint: #8a97a0;
+    --code-accent: #e3b054;
+    --shadow: 0 1px 2px rgba(27, 34, 43, 0.06), 0 8px 24px -12px rgba(27, 34, 43, 0.18);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151b;
+      --surface: #191e26;
+      --surface-2: #222834;
+      --ink: #e8ece8;
+      --ink-soft: #aab4bb;
+      --ink-faint: #7c8891;
+      --line: rgba(232, 236, 232, 0.13);
+      --accent: #e3b054;
+      --accent-ink: #2c1e07;
+      --accent-soft: rgba(227, 176, 84, 0.16);
+      --mac: #7fb0da;
+      --mac-soft: rgba(127, 176, 218, 0.14);
+      --pc: #7fcba4;
+      --pc-soft: rgba(127, 203, 164, 0.14);
+      --bad: #e28671;
+      --bad-soft: rgba(226, 134, 113, 0.14);
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -12px rgba(0, 0, 0, 0.55);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151b;
+    --surface: #191e26;
+    --surface-2: #222834;
+    --ink: #e8ece8;
+    --ink-soft: #aab4bb;
+    --ink-faint: #7c8891;
+    --line: rgba(232, 236, 232, 0.13);
+    --accent: #e3b054;
+    --accent-ink: #2c1e07;
+    --accent-soft: rgba(227, 176, 84, 0.16);
+    --mac: #7fb0da;
+    --mac-soft: rgba(127, 176, 218, 0.14);
+    --pc: #7fcba4;
+    --pc-soft: rgba(127, 203, 164, 0.14);
+    --bad: #e28671;
+    --bad-soft: rgba(226, 134, 113, 0.14);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -12px rgba(0, 0, 0, 0.55);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    line-height: 1.55;
+  }
+  code, pre, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+  a { color: var(--accent-ink); }
+  :root[data-theme="dark"] a, @media (prefers-color-scheme: dark) { }
+  a { color: color-mix(in srgb, var(--accent) 70%, var(--ink)); }
+
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 24px 96px; }
+
+  /* ---------- OS switch bar ---------- */
+  .switchbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .switchbar-inner {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .switchbar-label {
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+  .os-toggle {
+    display: inline-flex;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 3px;
+    background: var(--surface);
+    gap: 2px;
+  }
+  .os-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+  .os-toggle label {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 16px;
+    border-radius: 999px;
+    font-size: 0.86rem;
+    font-weight: 600;
+    cursor: pointer;
+    color: var(--ink-soft);
+    transition: background 0.15s ease, color 0.15s ease;
+    user-select: none;
+  }
+  .os-toggle label .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.55; }
+  #os-mac:checked ~ .os-toggle label[for="os-mac"],
+  #os-win:checked ~ .os-toggle label[for="os-win"] {
+    background: var(--surface-2);
+    color: var(--ink);
+  }
+  #os-mac:checked ~ .os-toggle label[for="os-mac"] .dot { background: var(--mac); opacity: 1; }
+  #os-win:checked ~ .os-toggle label[for="os-win"] .dot { background: var(--pc); opacity: 1; }
+
+  [data-os="mac"] .os-win { display: none; }
+  [data-os="win"] .os-mac { display: none; }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 56px 0 40px; }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    padding: 5px 12px;
+    border-radius: 999px;
+    margin-bottom: 18px;
+  }
+  h1 {
+    font-size: clamp(1.9rem, 4vw, 2.6rem);
+    line-height: 1.12;
+    letter-spacing: -0.01em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+    font-weight: 700;
+  }
+  .lede {
+    font-size: 1.08rem;
+    color: var(--ink-soft);
+    max-width: 60ch;
+    margin: 0 0 8px;
+  }
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- What you'll get ---------- */
+  .outcome {
+    margin-top: 28px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  .outcome-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .outcome-card .k {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-faint);
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .outcome-card .v { font-size: 0.95rem; color: var(--ink); }
+  .outcome-card .v code { background: var(--surface-2); padding: 1px 6px; border-radius: 5px; font-size: 0.85em; }
+
+  /* ---------- Section headers ---------- */
+  section { margin-top: 56px; }
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 22px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .section-head h2 {
+    font-size: 1.4rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+  .section-head .tag {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  /* ---------- Prereq table ---------- */
+  .prereq-list { display: flex; flex-direction: column; gap: 10px; }
+  .prereq-row {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 16px;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+  .prereq-row .name { font-weight: 600; font-size: 0.92rem; }
+  .prereq-row .why { font-size: 0.85rem; color: var(--ink-faint); }
+
+  /* ---------- Steps ---------- */
+  .steps { position: relative; }
+  .step {
+    position: relative;
+    padding-left: 52px;
+    padding-bottom: 40px;
+  }
+  .step:last-child { padding-bottom: 0; }
+  .step::before {
+    content: "";
+    position: absolute;
+    left: 17px;
+    top: 40px;
+    bottom: -4px;
+    width: 2px;
+    background: var(--line);
+  }
+  .step:last-child::before { display: none; }
+  .step-num {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 2px solid var(--accent);
+    color: var(--accent-ink);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.95rem;
+    font-family: "IBM Plex Mono", monospace;
+  }
+  .step h3 {
+    margin: 2px 0 8px;
+    font-size: 1.08rem;
+    font-weight: 600;
+  }
+  .step p.desc {
+    color: var(--ink-soft);
+    font-size: 0.94rem;
+    margin: 0 0 14px;
+    max-width: 62ch;
+  }
+  .step p.desc code { background: var(--surface-2); padding: 1px 6px; border-radius: 5px; font-size: 0.9em; }
+
+  .term {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .term-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .term-bar .b { width: 9px; height: 9px; border-radius: 50%; background: #4a5560; }
+  .term-bar .label {
+    margin-left: 8px;
+    font-size: 0.72rem;
+    color: var(--code-faint);
+    letter-spacing: 0.03em;
+  }
+  .term pre {
+    margin: 0;
+    padding: 14px 16px 16px;
+    font-size: 0.87rem;
+    line-height: 1.65;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .term .c1 { color: var(--code-faint); }
+  .term .acc { color: var(--code-accent); }
+
+  .note {
+    margin-top: 12px;
+    font-size: 0.85rem;
+    color: var(--ink-faint);
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .note svg { flex-shrink: 0; margin-top: 3px; }
+
+  .callout {
+    margin-top: 14px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    font-size: 0.87rem;
+    color: var(--ink-soft);
+  }
+  .callout b { color: var(--ink); }
+
+  /* ---------- Verify block ---------- */
+  .verify-result {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    background: var(--pc-soft);
+    color: color-mix(in srgb, var(--pc) 55%, var(--ink));
+    font-size: 0.86rem;
+    font-weight: 600;
+  }
+
+  /* ---------- Going further ---------- */
+  .further-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .further-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .further-card .k {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent-ink);
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  .further-card p { font-size: 0.88rem; color: var(--ink-soft); margin: 0 0 10px; }
+  .further-card .term { margin-top: 6px; }
+  .further-card .term pre { font-size: 0.8rem; }
+
+  .warn-strip {
+    margin-top: 20px;
+    display: flex;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--bad) 35%, var(--line));
+    background: var(--bad-soft);
+    font-size: 0.87rem;
+    color: color-mix(in srgb, var(--bad) 60%, var(--ink));
+  }
+  .warn-strip b { color: var(--ink); }
+
+  /* ---------- Troubleshooting ---------- */
+  .trouble { display: flex; flex-direction: column; gap: 10px; }
+  .trouble-item {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .trouble-item summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.88rem;
+  }
+  .trouble-item summary::-webkit-details-marker { display: none; }
+  .trouble-item summary .chev { margin-left: auto; color: var(--ink-faint); transition: transform 0.15s ease; }
+  .trouble-item[open] summary .chev { transform: rotate(90deg); }
+  .trouble-item summary code.err {
+    background: var(--bad-soft);
+    color: color-mix(in srgb, var(--bad) 65%, var(--ink));
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+  }
+  .trouble-body { padding: 0 16px 16px 16px; font-size: 0.87rem; color: var(--ink-soft); }
+  .trouble-body code { background: var(--surface-2); padding: 1px 6px; border-radius: 5px; font-size: 0.9em; color: var(--ink); }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-size: 0.82rem;
+    color: var(--ink-faint);
+  }
+
+  @media (max-width: 640px) {
+    .outcome { grid-template-columns: 1fr; }
+    .further-grid { grid-template-columns: 1fr; }
+    .prereq-row { grid-template-columns: 1fr; }
+    .hero { padding-top: 36px; }
+  }
+</style>
+
+<input type="radio" name="os" id="os-mac" checked style="position:absolute;opacity:0;">
+<input type="radio" name="os" id="os-win" style="position:absolute;opacity:0;">
+
+<div class="switchbar">
+  <div class="switchbar-inner">
+    <span class="switchbar-label">Following along on</span>
+    <div class="os-toggle">
+      <label for="os-mac"><span class="dot"></span>macOS</label>
+      <label for="os-win"><span class="dot"></span>Windows</label>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="hero">
+    <span class="eyebrow">🥚 Local setup guide</span>
+    <h1>Get AutoAutoAP running on your machine</h1>
+    <p class="lede">AutoAutoAP plans <b>ascension chains</b> for Egg, Inc.'s Virtue Prestige system — the sequence of Truth Egg checkpoints that gets you to a target the fastest. Follow the steps below top to bottom; use the switch above to see the exact commands for your platform.</p>
+
+    <div class="outcome">
+      <div class="outcome-card">
+        <div class="k">What you'll have</div>
+        <div class="v">The planner running at <code>localhost:4173</code>, open in your browser</div>
+      </div>
+      <div class="outcome-card">
+        <div class="k">Time needed</div>
+        <div class="v">10–20 minutes, most of it package downloads</div>
+      </div>
+    </div>
+  </div>
+
+  <section id="prereqs">
+    <div class="section-head">
+      <h2>Before you start</h2>
+      <span class="tag">One-time installs</span>
+    </div>
+
+    <div class="prereq-list">
+      <div class="prereq-row">
+        <div class="name">Node.js 24+</div>
+        <div class="why">Runs the build tooling. 26 works too.</div>
+      </div>
+      <div class="prereq-row">
+        <div class="name">pnpm</div>
+        <div class="why">The package manager this project's workspace is built with — not npm or yarn.</div>
+      </div>
+      <div class="prereq-row">
+        <div class="name">protoc</div>
+        <div class="why">Compiles Egg, Inc.'s <code>.proto</code> API definitions into TypeScript the app imports from.</div>
+      </div>
+      <div class="prereq-row">
+        <div class="name">make</div>
+        <div class="why">Runs the build recipes in each folder's <code>Makefile</code>.</div>
+      </div>
+      <div class="prereq-row">
+        <div class="name">Python 3.9+</div>
+        <div class="why">Only needed for the optional batch chain-search script later.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="steps">
+    <div class="section-head">
+      <h2>Build &amp; run</h2>
+      <span class="tag">Steps 1–6</span>
+    </div>
+
+    <div class="steps">
+
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Install the toolchain</h3>
+        <p class="desc os-mac">One Homebrew line covers everything: Node, pnpm, protoc, Python, and Git.</p>
+        <p class="desc os-win">Chocolatey covers everything in one line. This also installs <b>Git for Windows</b>, which brings Git Bash — use that terminal for every command below, since <code>make</code> and <code>&amp;&amp;</code> chaining need it.</p>
+
+        <div class="term os-mac">
+          <div class="term-bar"><span class="b"></span><span class="b"></span><span class="b"></span><span class="label">zsh — Terminal.app</span></div>
+          <pre><span class="c1"># if you don't have Homebrew yet:</span>
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+<span class="c1"># then:</span>
+brew install node pnpm protobuf python git</pre>
+        </div>
+
+        <div class="term os-win">
+          <div class="term-bar"><span class="b"></span><span class="b"></span><span class="b"></span><span class="label">PowerShell (Run as Administrator)</span></div>
+          <pre><span class="c1"># if you don't have Chocolatey yet:</span>
+Set-ExecutionPolicy Bypass -Scope Process -Force
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
+<span class="c1"># then, in a new admin PowerShell window:</span>
+choco install git nodejs-lts pnpm protoc make python -y</pre>
+        </div>
+
+        <p class="note os-win">
+          After this finishes, close PowerShell and open <b>Git Bash</b> (search for it in the Start menu) — use it for every step from here on.
+        </p>
+      </div>
+
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>Open a terminal in the project folder</h3>
+        <p class="desc">Wherever you saved <code>AutoAutoAP-ascension-chain-search</code> — a download, a USB drive, a clone from wherever you got it — navigate there first.</p>
+        <div class="term">
+          <div class="term-bar"><span class="b"></span><span class="b"></span><span class="b"></span><span class="label mono os-mac">zsh</span><span class="label mono os-win">Git Bash</span></div>
+          <pre>cd path/to/AutoAutoAP-ascension-chain-search</pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Install workspace dependencies</h3>
+        <p class="desc">This is a pnpm <i>workspace</i> — 23 sub-projects share one install. Always run this at the <b>repo root</b>, never inside a subfolder.</p>
+        <div class="term">
+          <div class="term-bar"><span class="b"></span><span class="b"></span><span class="b"></span><span class="label">repo root</span></div>
+          <pre>pnpm install</pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">4</div>
+        <h3>Generate the protobuf bindings</h3>
+        <p class="desc">Every other package imports the Egg, Inc. API types from <code>lib/proto</code> — but that folder is generated, not committed. This is the step people skip, and it's the one that produces a wall of <code>Cannot find module '../proto'</code> errors if you do.</p>
+        <div class="term">
+          <div class="term-bar"><span class="b"></span><span class="b"></span><span class="b"></span><span class="label">repo root → lib/</span></div>
+          <pre>cd lib
+make</pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">5</div>
+        <h3>Build the planner</h3>
+        <p class="desc">Compiles the Vue app into a static bundle in <code>dist/</code>.</p>
+        <div class="term">
+          <div class="term-bar"><span class="b"></span><span class="b"></span><span class="b"></span><span class="label">lib/ → wasmegg/ascension-planner</span></div>
+          <pre>cd ../wasmegg/ascension-planner
+pnpm fastbuild</pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">6</div>
+        <h3>Run it</h3>
+        <p class="desc">Serves the build locally. Leave this terminal window open while you use the app.</p>
+        <div class="term">
+          <div class="term-bar"><span class="b"></span><span class="b"></span><span class="b"></span><span class="label">wasmegg/ascension-planner</span></div>
+          <pre>pnpm serve</pre>
+        </div>
+        <div class="verify-result">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7.5L5.5 11L12 3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Open <span class="mono">http://localhost:4173/ascension-planner/</span> in your browser
+        </div>
+        <div class="callout">
+          <b>Heads up:</b> the app needs a secure context to work — <code>localhost</code> is fine, but serving it over plain HTTP on your LAN (e.g. another device hitting your IP address) will break silently, because the browser's crypto APIs refuse to run.
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section id="further">
+    <div class="section-head">
+      <h2>Going further</h2>
+      <span class="tag">Optional</span>
+    </div>
+    <p class="lede" style="margin-bottom:20px;">The page you just opened is the interactive planner — pick targets, hit <i>Generate Plan</i>, get one chain. There's a separate command-line tool for a heavier job: searching thousands of candidate chains to find the genuinely fastest one.</p>
+
+    <div class="further-grid">
+      <div class="further-card">
+        <div class="k">Verify the build is faithful</div>
+        <p>Confirms your machine's simulator matches the reference result to the hour, before you trust a multi-hour search.</p>
+        <div class="term">
+          <div class="term-bar"><span class="b"></span><span class="b"></span><span class="b"></span><span class="label">ascension-planner</span></div>
+          <pre>pnpm search:build
+node dist-search/fastsearch.js \
+  --backup your_backup.json --final 490 \
+  --start-date 2026-09-04 --start-time 18:51 \
+  --timezone America/Denver --force-continue</pre>
+        </div>
+      </div>
+      <div class="further-card">
+        <div class="k">Search for the best chain</div>
+        <p><code>--player-id</code> fetches your save over the network; <code>--backup file.json</code> runs fully offline instead.</p>
+        <div class="term">
+          <div class="term-bar"><span class="b"></span><span class="b"></span><span class="b"></span><span class="label">ascension-planner</span></div>
+          <pre>python scripts/autoplan.py \
+  --player-id EIxxxxxxxxxxxxxxxx \
+  --backup me.json \
+  --effort balanced --jobs 12 --yes</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="warn-strip">
+      <span>⚠</span>
+      <span><b>Treat your player ID as a secret.</b> The Egg, Inc. API will hand your entire save to anyone who has it — that's exactly what <code>--player-id</code> requests. Don't paste a real one into a screenshot, log, or chat.</span>
+    </div>
+  </section>
+
+  <section id="troubleshooting">
+    <div class="section-head">
+      <h2>Troubleshooting</h2>
+      <span class="tag">What each error actually means</span>
+    </div>
+
+    <div class="trouble">
+      <details class="trouble-item">
+        <summary><code class="err">Cannot find module '../proto'</code> or <code class="err">UNRESOLVED_IMPORT</code><span class="chev">›</span></summary>
+        <div class="trouble-body">You skipped Step 4. Go to the repo root, <code>cd lib</code>, and run <code>make</code> — this generates the file every other package is importing from.</div>
+      </details>
+      <details class="trouble-item">
+        <summary><code class="err">No targets specified and no makefile found</code><span class="chev">›</span></summary>
+        <div class="trouble-body">You ran <code>make</code> from the wrong folder — there's no top-level <code>Makefile</code> at the repo root. <code>cd lib</code> (or the specific project folder) first, then run <code>make</code> there.</div>
+      </details>
+      <details class="trouble-item">
+        <summary><code class="err">protoc: command not found</code> / <code class="err">pbjs</code> fails<span class="chev">›</span></summary>
+        <div class="trouble-body">protobuf isn't installed, or your terminal was opened before the install finished. Re-run the Step 1 install command, then open a <b>new</b> terminal window so it picks up the updated PATH.</div>
+      </details>
+      <details class="trouble-item">
+        <summary><code class="err">ENOENT: no such file or directory, open 'blind_main.json'</code><span class="chev">›</span></summary>
+        <div class="trouble-body">Expected — that filename is a placeholder example from someone else's private backup, not something shipped in this repo. Point <code>--backup</code> at your own save file instead, or fetch one live with <code>--player-id</code>.</div>
+      </details>
+      <details class="trouble-item">
+        <summary class="os-win"><code class="err">'make' is not recognized</code> / <code class="err">&amp;&amp; was unexpected</code><span class="chev">›</span></summary>
+        <div class="trouble-body os-win">You're running commands in PowerShell or Command Prompt. Use <b>Git Bash</b> instead — it's installed alongside Git for Windows and behaves like the macOS/Linux examples throughout this guide.</div>
+      </details>
+    </div>
+  </section>
+
+  <footer>
+    Built on top of <span class="mono">wasmegg-carpet/egg</span>. The Makefiles and GitHub build workflows in this repo are the full reference if a step here ever drifts out of date.
+  </footer>
+
+</div>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var macRadio = document.getElementById('os-mac');
+    var winRadio = document.getElementById('os-win');
+
+    function apply(os) {
+      root.setAttribute('data-os', os);
+      try { localStorage.setItem('autoautoap-os', os); } catch (e) {}
+    }
+
+    var saved = null;
+    try { saved = localStorage.getItem('autoautoap-os'); } catch (e) {}
+
+    if (saved === 'win') {
+      winRadio.checked = true;
+      apply('win');
+    } else {
+      apply('mac');
+    }
+
+    macRadio.addEventListener('change', function () { if (macRadio.checked) apply('mac'); });
+    winRadio.addEventListener('change', function () { if (winRadio.checked) apply('win'); });
+  })();
+</script>
