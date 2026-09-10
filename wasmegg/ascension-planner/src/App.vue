@@ -415,6 +415,10 @@
 
       <div v-else-if="plannerTab === 'automatic' && playerId && !loading">
         <AutomaticPlanner />
+        <!-- Sits under the Auto Planner rather than in its own tab: it searches for a better
+             version of the very chain that form's Target TE field holds, and reads its plan start
+             from the same scheduling inputs. -->
+        <ChainSearchPanel :player-id="playerId" />
       </div>
 
       <!-- Undo Confirmation Dialog -->
@@ -542,6 +546,7 @@ import LoadingOverlay from '@/components/LoadingOverlay.vue';
 import PlanLibrary from '@/components/PlanLibrary.vue';
 import PlanSelectionDialog from '@/components/PlanSelectionDialog.vue';
 import AutomaticPlanner from '@/components/auto/AutomaticPlanner.vue';
+import ChainSearchPanel from '@/components/auto/ChainSearchPanel.vue';
 import { useSalesStore } from '@/stores/sales';
 import { hashID, saveMetadata, loadMetadata } from '@/lib/storage/db';
 import { useActionExecutor } from '@/composables/useActionExecutor';

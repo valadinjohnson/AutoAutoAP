@@ -11,7 +11,7 @@ import { getLocalTimestampInTimezone } from '@/lib/events';
 import { runUntilShift, deriveNextStartState, runContinueCurrent, runAscensionFromC3Variant } from '@/auto/ascension';
 import { runC3Variants } from '@/auto/shifts/c3';
 import { rollUpPendingTE } from '@/lib/modes';
-import { getArtifactLoadoutFromBackup, getOptimalEarningsSet } from '@/lib/artifacts';
+import { getArtifactLoadoutFromBackup, getOptimalEarningsSet, getOptimalELRSet } from '@/lib/artifacts';
 import { triggerPlanExport, type ExportedPlan } from '@/auto/export';
 import { buildLibraryPlansFromExport } from '@/auto/buildLibraryPlans';
 import { savePlanToLibrary, type PlanData } from '@/lib/storage/db';
@@ -409,6 +409,26 @@ export function useAscensionGenerator() {
               ? getOptimalEarningsSet(initialStateStore.rawBackup)
               : currentBaseState.artifactSets.earnings || null;
 
+            // The delivery-rate loadout the player would field on continuing - NOT whatever
+            // happens to be equipped this instant. `activeArtifactSet: 'elr'` below already
+            // declares that continue runs on the ELR set, but filing the raw equipped loadout
+            // under `elr` meant a player parked in an earnings set (no shipping/lay-rate
+            // artifacts) had continue scored at their earnings-set ELR - roughly half the real
+            // rate here - which made continuing look far worse than prestiging and effectively
+            // hid it as an option. Artifact swaps are free and instant in game, so the honest
+            // comparison is against the best set they can actually equip. Habs/vehicles are NOT
+            // assumed maxed: unlike H1 (see shifts/h1.ts) this runs mid-ascension, from whatever
+            // the farm is at right now.
+            const continueElrLoadout = initialStateStore.rawBackup
+              ? getOptimalELRSet(initialStateStore.rawBackup, {
+                  commonResearch: farmState.commonResearches,
+                  epicResearchLevels: initialStateStore.epicResearchLevels,
+                  colleggtibleModifiers: initialStateStore.colleggtibleModifiers,
+                  currentSet: rawLoadout,
+                  assumeMaxHabsVehicles: false,
+                })
+              : rawLoadout;
+
             const continueState: import('@/engine/types').EngineState = {
               currentEgg: (VIRTUE_EGGS_MAP[farmState.eggType] || 'curiosity') as VirtueEgg,
               shiftCount: currentBaseState.shiftCount,
@@ -419,14 +439,14 @@ export function useAscensionGenerator() {
               researchLevels: { ...farmState.commonResearches },
               siloCount: farmState.numSilos || 1,
               tankLevel: currentBaseState.tankLevel,
-              artifactLoadout: rawLoadout.map((slot: any) => ({
+              artifactLoadout: continueElrLoadout.map((slot: any) => ({
                 artifactId: slot.artifactId,
                 stones: [...slot.stones],
               })),
               activeArtifactSet: 'elr',
               artifactSets: {
                 earnings: optimalEarnings ? JSON.parse(JSON.stringify(optimalEarnings)) : null,
-                elr: JSON.parse(JSON.stringify(rawLoadout)),
+                elr: JSON.parse(JSON.stringify(continueElrLoadout)),
               },
               fuelTankAmounts: { ...currentBaseState.fuelTankAmounts },
               eggsDelivered: { ...currentBaseState.eggsDelivered },

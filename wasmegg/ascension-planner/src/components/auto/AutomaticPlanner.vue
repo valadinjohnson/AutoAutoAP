@@ -237,6 +237,7 @@ import { useAutoPlannerStore, type VariantKey } from '@/stores/autoPlanner';
 import { useVirtueStore } from '@/stores/virtue';
 import { useTruthEggsStore } from '@/stores/truthEggs';
 import { useAscensionGenerator } from '@/auto/useAscensionGenerator';
+import { useChainSearchStore } from '@/stores/chainSearch';
 import { useEarningsClothedTE } from '@/composables/useEarningsClothedTE';
 import { loadAutoPlannerSchedule, saveAutoPlannerSchedule } from '@/lib/autoPlannerFormCache';
 import { isTestingEnvironment } from '@/lib/isTestingEnvironment';
@@ -352,6 +353,19 @@ const runGenerate = () => {
   console.clear();
   regeneratePlan(() => nextTick(() => targetInput.value?.focus()));
 };
+
+// The chain search's "Use this chain and generate" lands here. It signals rather than calling
+// `generate()` itself because that composable would hand it a SECOND instance, whose
+// `isGenerating`/`generateProgress` nothing renders - the plan would appear with no sign of work
+// in between. Generating through the instance this component already owns keeps the progress
+// visible where the user is looking.
+const chainSearchStore = useChainSearchStore();
+watch(
+  () => chainSearchStore.generateRequested,
+  () => {
+    regeneratePlan();
+  }
+);
 
 const handleTargetTEInput = (e: Event) => {
   const input = e.target as HTMLInputElement;

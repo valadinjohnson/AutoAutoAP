@@ -11,3 +11,11 @@ __target__
 .agent
 lib/.claude
 .pnpm-store/
+
+# Player backups: personal save data, refetchable with --player-id. Never commit.
+wasmegg/ascension-planner/*.json
+!wasmegg/ascension-planner/package.json
+!wasmegg/ascension-planner/tsconfig.json
+
+# Headless search CLI build output
+dist-search/
