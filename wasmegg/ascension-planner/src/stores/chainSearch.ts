@@ -39,7 +39,8 @@ import {
   virtueInventory,
   type InventoryCount,
 } from '@/search/csv';
-import { pickShortlist, type ShortlistRow } from '@/search/shortlist';
+import { type ShortlistRow } from '@/search/shortlist';
+import { buildView, type ViewId } from '@/search/views';
 import { describeAvailability, isConstrained, type Availability } from '@/search/availability';
 import { missedMilestones, usableMilestones, type Milestone } from '@/search/milestones';
 import {
@@ -451,11 +452,18 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
   const shortlist = ref<ShortlistRow[]>([]);
   let lastShortlistAt = 0;
 
+  /** Which preset view the runners-up table is showing. Persisted for the session only: it is a
+   *  way of looking at one run's results, not a setting that should outlive the run. */
+  const shortlistView = ref<ViewId>('balanced');
+
   function refreshShortlist(force = false): void {
     const now = Date.now();
     if (!force && now - lastShortlistAt < SHORTLIST_INTERVAL_MS) return;
     lastShortlistAt = now;
-    shortlist.value = pickShortlist(allEntries());
+    shortlist.value = buildView(allEntries(), shortlistView.value, {
+      planStart: planStartUsed.value || planStart.value,
+      timezone: useAutoPlannerStore().timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
   }
 
   /** Coarse-scan results plus driver cache, de-duplicated by chain, driver winning. */
@@ -822,6 +830,13 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
   }
 
   /** Recompute the runners-up now — for the panel, when a run is not writing batches. */
+  /** Switch view and rebuild immediately -- this reads the cache the run already has, so it is
+   *  instant and costs no simulation. */
+  function setShortlistView(view: ViewId): void {
+    shortlistView.value = view;
+    refreshShortlist(true);
+  }
+
   function rebuildShortlist(): void {
     refreshShortlist(true);
   }
@@ -889,6 +904,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     runLog,
     csvRows,
     shortlist,
+    shortlistView,
+    setShortlistView,
     // actions
     start,
     stop,

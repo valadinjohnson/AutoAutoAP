@@ -361,13 +361,27 @@ def resolve_last(sim, chain, span=12):
        almost no earning time. Measured optima are ~330 on the main (envelope
        rising above ~337) and ~289 on the alt (rising above ~296), against
        final=490. `sim.a.max_last` caps it - default final-150.
+    3. Centre on an out-of-range value. Nothing that PRODUCES a seed respects
+       max_last - the coarse scan sweeps a fixed 185..390 grid and returns
+       whatever won on it - so c0 can start above `top`. That made lo > hi, an
+       empty range, and a silent `return ch`, which disabled this sweep for the
+       whole run including the re-solve after every accepted descent move. With
+       final=490 the cap is 340, the coarse scan proposed 360, and
+       lo = max(287, 348) = 348 > hi = min(340, 372) = 340. Measured cost on a
+       real 9795-chain browser run: settled at 742.378 d with the last
+       checkpoint at 359 while 741.500 d sat at 328, inside the window this was
+       meant to cover and never priced. Clamping starts the sweep at the edge of
+       the legal range, from which the widening rule walks down to it.
     """
     ch = list(chain)
-    c0 = ch[-2]
     top = min(sim.a.max_last, sim.a.final - 2)
+    floor = ch[-3] + 2
+    if top < floor:
+        return ch
+    c0 = min(max(ch[-2], floor), top)
     best = None
     while True:
-        lo, hi = max(ch[-3] + 2, c0 - span), min(top, c0 + span)
+        lo, hi = max(floor, c0 - span), min(top, c0 + span)
         sim.run([[v] for v in ch[:-2]] + [list(range(lo, hi + 1))])
         cand = [(sim.get(ch[:-2] + [v, sim.a.final]), v) for v in range(lo, hi + 1)]
         cand = [(d, v) for d, v in cand if d is not None]
@@ -375,7 +389,7 @@ def resolve_last(sim, chain, span=12):
             return ch
         best = min(cand)
         # widen only while the winner is pinned to an edge we can still move
-        pinned = (best[1] == lo and lo > ch[-3] + 2) or (best[1] == hi and hi < top)
+        pinned = (best[1] == lo and lo > floor) or (best[1] == hi and hi < top)
         if not pinned or span >= 36:
             break
         span += 12

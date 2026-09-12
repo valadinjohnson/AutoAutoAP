@@ -256,12 +256,26 @@ export async function runChainSearch(opts: DriverOptions): Promise<SearchOutcome
   async function resolveLast(chain: number[]): Promise<number[]> {
     const ch = [...chain];
     if (ch.length < 2) return ch;
-    const centre = ch[ch.length - 2];
     // autoplan.py indexes `ch[-3]` here and so requires at least three entries. The floor it wants
     // is "whatever the previous checkpoint is"; for a two-entry chain there is no previous
     // checkpoint and the player's current TE is the real floor.
     const floor = ch.length >= 3 ? ch[ch.length - 3] + 2 : opts.currentTE + 1;
     const top = Math.min(maxLast, final - 2);
+    if (top < floor) return ch;
+
+    // CLAMP THE CENTRE INTO THE LEGAL RANGE. The incoming value can sit outside [floor, top]
+    // because nothing that produces it is bound by `maxLast` -- the coarse scan sweeps a fixed
+    // grid (185..390) and hands back whatever won on it. Centring on an out-of-range value made
+    // `lo` exceed `hi` and the whole sweep returned unchanged, silently: with final=490 the cap is
+    // 340, the coarse scan proposed 360, and `lo = max(287, 348) = 348 > hi = min(340, 372) = 340`.
+    //
+    // That disabled this function for the ENTIRE run -- including the re-solve after every
+    // accepted descent move -- so the last checkpoint was only ever moved by descent's +-8 and the
+    // 3-D slices' +-6, drifting 360 to 359. Measured cost on a real 9795-chain `thorough` run:
+    // it settled at 742.378 d while 741.500 d sat at A6=328, thirty-one below and well inside the
+    // window this sweep was meant to cover. Clamping starts the sweep at the edge of the legal
+    // range, from which the widening rule can walk down to it.
+    const centre = Math.min(Math.max(ch[ch.length - 2], floor), top);
     let span = 12;
 
     for (;;) {

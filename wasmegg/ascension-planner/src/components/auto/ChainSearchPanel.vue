@@ -944,6 +944,27 @@
           not comparable.
         </p>
 
+        <!-- Preset views over the SAME priced chains. Nothing here re-simulates; every one of
+             these reads the cache the run already built, so switching is instant. -->
+        <div class="flex flex-wrap gap-1.5">
+          <button
+            v-for="v in VIEWS"
+            :key="v.id"
+            type="button"
+            class="px-2.5 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest transition-colors"
+            :class="
+              store.shortlistView === v.id
+                ? 'bg-slate-800 border-slate-800 text-white'
+                : 'bg-white border-slate-300 text-slate-500 hover:border-slate-400 hover:text-slate-700'
+            "
+            @click="store.setShortlistView(v.id)"
+          >
+            {{ v.label }}
+          </button>
+        </div>
+
+        <p class="text-[11px] text-slate-500 leading-relaxed">{{ activeView?.hint }}</p>
+
         <div class="overflow-x-auto">
           <table class="w-full text-xs">
             <thead>
@@ -972,7 +993,19 @@
             <tbody>
               <template v-for="row in store.shortlist" :key="row.chain.join(',')">
                 <tr class="border-t border-slate-100">
+                  <!-- The caret sits with the chain it opens, not off at the far right past six
+                       other columns. Same move as the leg table's A1 caret, for the same reason. -->
                   <td class="py-2 pr-3 font-mono font-bold text-slate-700 whitespace-nowrap">
+                    <button
+                      v-if="row.legs.length"
+                      type="button"
+                      class="mr-1.5 text-slate-400 hover:text-emerald-700"
+                      :aria-expanded="expandedRow === row.chain.join(',')"
+                      :aria-label="`Show when ${row.chain.join(' ')} happens`"
+                      @click="expandedRow = expandedRow === row.chain.join(',') ? '' : row.chain.join(',')"
+                    >
+                      {{ expandedRow === row.chain.join(',') ? '⌄' : '›' }}
+                    </button>
                     {{ row.chain.join(' ') }}
                   </td>
                   <td class="py-2 pr-3 font-bold text-slate-600">{{ row.prestiges }}</td>
@@ -997,15 +1030,6 @@
                   </td>
                   <td class="py-2 pr-3 text-slate-400">{{ REASON_TEXT[row.reason] }}</td>
                   <td class="py-2 text-right whitespace-nowrap">
-                    <button
-                      v-if="row.legs.length"
-                      type="button"
-                      class="px-2 py-1 mr-1 rounded-md text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-emerald-700"
-                      :aria-expanded="expandedRow === row.chain.join(',')"
-                      @click="expandedRow = expandedRow === row.chain.join(',') ? '' : row.chain.join(',')"
-                    >
-                      {{ expandedRow === row.chain.join(',') ? '⌄' : '›' }} When
-                    </button>
                     <button
                       type="button"
                       class="px-2.5 py-1 rounded-md border border-slate-300 text-[10px] font-black uppercase tracking-widest text-slate-600 hover:border-emerald-400 hover:text-emerald-700"
@@ -1066,9 +1090,10 @@
         </div>
 
         <p class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed">
-          These are the best alternatives <span class="font-semibold">among the chains this run priced</span>. A search
-          stays in its own neighbourhood, so a chain missing from this list was almost certainly never evaluated — not
-          evaluated and beaten.
+          Every view above reads the <span class="font-semibold">{{ store.csvRows.toLocaleString() }}</span>
+          chains this run priced — switching costs nothing and re-simulates nothing. A chain missing from
+          all of them was almost certainly never evaluated rather than evaluated and beaten: the search
+          stays in its own neighbourhood. Download the CSV for the full list.
         </p>
       </div>
 
@@ -1214,6 +1239,7 @@ import HelpTip from './HelpTip.vue';
 import LoadoutDisplay from './LoadoutDisplay.vue';
 import type { EffortTier, LegSummary } from '@/search/types';
 import type { ShortlistRow } from '@/search/shortlist';
+import { VIEWS } from '@/search/views';
 
 const props = defineProps<{ playerId: string }>();
 
@@ -1366,6 +1392,8 @@ function eggBlocks(leg: LegSummary): EggBlock[] {
 
 /** Which runner-up's timing is open, by chain key. Empty for none. */
 const expandedRow = ref('');
+
+const activeView = computed(() => VIEWS.find(v => v.id === store.shortlistView));
 
 /** `Sep 30, 5:25 PM` — deliberately no year. Every leg of a plan sits within a couple of years of
  *  the others, so the year is dead weight in a table this dense; the finish date above carries it. */

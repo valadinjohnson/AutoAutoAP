@@ -11,6 +11,11 @@ Good chains are genuinely rare. On the one account where every chain in a window
 measured, **21 of 4913 (0.43%) land within a day of optimal**. You will not find one by
 trying a few by hand.
 
+The space is 7.29 x 10^16 chains and one costs ~15 s to score, so "try them all" is
+3.5 x 10^10 years on one core. [FOR_MATH_NERDS.md](FOR_MATH_NERDS.md) explains how a
+search that looks at one chain in ten trillion still lands within hours of the best answer
+found -- and which parts of that are measured versus guessed.
+
 > **Player IDs in this repo are placeholders.** Every `EI…` in the docs, logs and scripts
 > (`EI1234567890123456`, `EI2345678901234567`, `EI3456789012345678`) stands in for the real
 > account the measurement was taken on. Substitute your own. Treat a real one as a secret:

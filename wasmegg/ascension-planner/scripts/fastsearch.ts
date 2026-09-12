@@ -25,7 +25,23 @@
  *     the "X4 = 0 mod 4" rule and the "X2 225-231 all tie" rule. Here the start
  *     is pinned once and shared by every chain in the run.
  *
+ * TWO MODES.
+ *
+ *   --effort <tier>   Runs the SAME staged search the browser panel runs, against the same
+ *                     evaluator, by importing src/search/driver.ts and src/search/chain.ts
+ *                     directly. Not a reimplementation: one driver, two front ends, so the
+ *                     command line cannot drift from the GUI the way scripts/autoplan.py did.
+ *                     Everything the panel exposes has a flag here; see --help.
+ *
+ *   --stages/--grid   The original explicit-candidate mode: you name the chains, it prices all
+ *                     of them. Still what autoplan.py drives, and what --exhaustive uses.
+ *
+ * Fully offline with --backup: nothing is fetched, so an air-gapped machine with a saved
+ * backup JSON runs the whole thing. --player-id is the only flag that touches the network.
+ *
  * Usage (after `pnpm search:build`):
+ *   node dist-search/fastsearch.js --backup backup.json --effort thorough --jobs 12
+ *   node dist-search/fastsearch.js --backup backup.json --exhaustive --range 185:390:5 --prestiges 6-8
  *   node dist-search/fastsearch.js --player-id EI... --stages "195;225-231;270-290;310-330"
  *   node dist-search/fastsearch.js --backup backup.json --grid 195,226,277,317,362 --prestiges 5-8
  *
@@ -55,6 +71,13 @@ import { getThresholdForTE } from '@/lib/truthEggs';
 import { countUnavailable, describeAvailability, isConstrained, nextAvailable,
          type Availability } from '@/search/availability';
 import { meetsAll, usableMilestones, type LegArrival, type Milestone } from '@/search/milestones';
+import { createChainEvaluator } from '@/search/chain';
+import { runChainSearch, type CacheEntry, type EvaluateBatch } from '@/search/driver';
+import { findStartingChain } from '@/search/coarse';
+import { EFFORT, EFFORT_ORDER, estimateChains } from '@/search/effort';
+import { splitByPrefix, workersForBatch } from '@/search/batch';
+import { buildChainsCsv, describeVirtueInventory } from '@/search/csv';
+import type { ChainResult, EffortTier, SearchInputs } from '@/search/types';
 import {
   runUntilShift,
   deriveNextStartState,
@@ -393,6 +416,78 @@ function reportChosenLoadout(): void {
              : 'NOT equipped in either probe (the player already owns something at least as good; ' +
                'the plan below is therefore unchanged by this injection)'));
   }
+}
+
+/** Every flag, grouped the way the browser panel groups them, so the two can be read side by
+ *  side. Printed by --help; nothing else runs. */
+function printHelp(): void {
+  console.log(`
+fastsearch - the Ascension Planner's chain search, headless.
+
+  Finds the fastest sequence of prestige checkpoints to a Truth Egg target, scoring every
+  candidate with the planner's own simulator. Runs fully offline with --backup.
+
+ACCOUNT  (one is required)
+  --backup FILE.json        A saved backup. Nothing is fetched; works air-gapped.
+  --player-id EI...         Fetch the backup from the API. The only flag that uses the network.
+  --save-backup FILE        With --player-id, write the fetched backup for offline reuse.
+
+MODE  (one of)
+  --effort TIER             The browser panel's staged search.
+                            fast|balanced|exact|thorough (the slider's labels; the internal
+                            names quick|balanced|normal|thorough also work).
+  --exhaustive              Price EVERY chain over a pool. No staged search, no pruning; the
+                            winner is the true optimum of that space. Needs --range or --grid.
+  --stages "a;b,c;d-e"      Explicit candidates: one pick per group, in order.
+  --grid a,b,c --prestiges 5-8
+                            Every subset of a pool at those chain lengths.
+
+THE PANEL'S SETTINGS  (--effort mode)
+  --seed "195 219 248"      Starting chain, final target appended for you. Panel: Starting chain.
+  --find-seed               Coarse-scan for a seed first. Panel: "Find a starting chain for me".
+  --min-prestiges N         Panel: Fewest ascensions.          (default 4)
+  --max-prestiges N         Panel: Most ascensions.            (default 9)
+  --pin N                   Hold the first N checkpoints fixed. Panel: "Lock the first".
+  --final TE                Panel: Final target TE.            (default 490)
+
+WHEN YOU CAN PLAY  (all modes; changes which chain wins, not just the display)
+  --available-from H --available-to H
+                            Hours you are around, in --timezone. Panel: "Plan around my schedule".
+  --sleep-from H --sleep-until H
+                            The same thing inverted, for the common case.
+  --available-days sat,sun  Restrict to those days.            (default every day)
+  --no-hold-shifts          Do NOT hold the twelve in-ascension shifts for your hours -- report
+                            them and charge nothing. Panel: untick "Hold the shifts for my hours
+                            too". Holding is the default, as in the panel.
+  --milestone "248@2027-06-01"
+                            Hard constraint, repeatable. Panel: "Dates you need to hit".
+
+WHEN THE PLAN STARTS
+  --start-date YYYY-MM-DD   (default today)
+  --start-time HH:MM        (default the current hour)
+  --timezone IANA           (default this machine's)
+  --force-continue          Continue the current ascension rather than prestiging first.
+
+EXHAUSTIVE
+  --range lo:hi[:step]      Pool to enumerate, e.g. 185:390:5. Step defaults to 1.
+  --prestiges lo-hi         Chain lengths to enumerate.        (default 5-8)
+  --yes                     Proceed past the 5000-chain safety cap.
+
+OUTPUT
+  --jobs N                  Worker processes. The staged search keeps a persistent pool.
+  --csv FILE                The panel's own CSV export, one row per leg.
+  --top N                   Runners-up to print.               (default 10)
+
+WHAT-IF  (neither edits the save)
+  --mod elr=1.05            Scale a colleggtible dimension.
+  --add-artifact compass:legendary
+  --show-loadout            Print the chosen ELR loadout and exit.
+
+EXAMPLES
+  node dist-search/fastsearch.js --backup me.json --effort thorough --find-seed --jobs 12 \\
+      --available-from 9 --available-to 23 --csv run.csv
+  node dist-search/fastsearch.js --backup me.json --exhaustive --range 185:390:15 --prestiges 6-7 --jobs 12
+`);
 }
 
 // ------------------------------------------------------------------ bootstrap
@@ -748,6 +843,484 @@ interface Row {
  * process gives for free. Every child re-fetches the backup, so pass
  * --backup file.json to avoid N identical API calls.
  */
+// ============================================================ GUI-parity search
+//
+// The browser panel and this share `src/search/driver.ts` and `src/search/chain.ts`
+// outright. Only the three things the driver deliberately abstracts differ: where the
+// chains get evaluated, how progress is reported, and where the answer is written.
+//
+// The alternative -- a second staged search written in Python -- is what
+// `scripts/autoplan.py` is, and it is exactly how the `resolve_last` bug survived: the
+// same defect existed in both copies and had to be found and fixed twice. One driver
+// cannot drift from itself.
+
+/** Build the evaluator inputs the driver needs. Mirrors `collectInputs()` in
+ *  stores/chainSearch.ts field for field -- if one gains a field, so must the other. */
+function planInputs(o: {
+  planStart: number;
+  currentTE: number;
+  final: number;
+  availability: Availability | null;
+  milestones: Milestone[];
+  deferShifts: boolean;
+}): SearchInputs {
+  return {
+    context: simContext(),
+    baseState: createBaseEngineState(null),
+    currentFarmState: (useInitialStateStore() as any).currentFarmState,
+    planStart: o.planStart,
+    currentTE: o.currentTE,
+    final: o.final,
+    forceContinue: has('force-continue'),
+    availability: o.availability,
+    milestones: o.milestones,
+    deferShifts: o.deferShifts,
+  };
+}
+
+/**
+ * A PERSISTENT pool of child processes, each holding a loaded player and a warm prefix memo.
+ *
+ * Child processes rather than worker_threads for the same reason `runSharded` uses them: every
+ * evaluator needs its own Pinia instance and its own store graph, which a fresh process gives
+ * for free. The difference from `runSharded` is that these are forked ONCE and then fed batches
+ * over IPC, because the driver's batches are decided as it goes and re-forking per batch would
+ * pay the ~2 s load cost hundreds of times.
+ *
+ * Chains are dealt to workers by PREFIX, never round-robin. The evaluator memoises per leg, so
+ * two chains sharing `195,226,277` cost one simulation if they land on the same worker and two
+ * if they do not. Round-robin would silently double the work of the widest stages.
+ */
+async function makeWorkerPool(jobs: number): Promise<{
+  evaluate: EvaluateBatch;
+  legSims: () => number;
+  close: () => void;
+}> {
+  const { fork } = await import('node:child_process');
+  // Everything except --jobs, plus --worker. The child must not itself try to shard.
+  const base = process.argv.slice(2).filter((a, i, arr) => a !== '--jobs' && arr[i - 1] !== '--jobs');
+
+  type Child = ReturnType<typeof fork>;
+  const kids: Child[] = [];
+  let legSimTotal = 0;
+
+  await Promise.all(
+    Array.from({ length: jobs }, (_, i) =>
+      new Promise<void>((res, rej) => {
+        const c = fork(process.argv[1], [...base, '--worker'], {
+          stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+        });
+        // Workers are silent on stdout by design; anything they do print is a problem worth
+        // seeing, so it is forwarded rather than swallowed.
+        c.stderr?.on('data', d => process.stderr.write('[w' + i + '] ' + d));
+        c.once('message', (m: any) => (m?.ready ? res() : rej(new Error('worker ' + i + ': ' + JSON.stringify(m)))));
+        c.once('exit', code => rej(new Error('worker ' + i + ' exited ' + code + ' during startup')));
+        kids.push(c);
+      })
+    )
+  );
+  // Startup listeners would otherwise reject the pool the moment we close it.
+  for (const c of kids) c.removeAllListeners('exit');
+
+  const evaluate: EvaluateBatch = async chains => {
+    if (!chains.length) return { results: [], legSims: 0, workersUsed: 0 };
+
+    // `workersForBatch` and `splitByPrefix` are the browser pool's own splitter, reused verbatim
+    // rather than re-derived here. Both encode measurements -- a floor of MIN_CHAINS_PER_WORKER
+    // chains each because spreading a 13-chain batch over 12 shards is mostly overhead, and a cut
+    // on whole prefix subtrees because splitting destroys the per-leg memo (a 17-value sweep costs
+    // 2 + 17x4 = 70 leg sims in one worker and 17x6 = 102 across seventeen). Writing a second
+    // splitter here would be the same mistake as a second driver.
+    const wanted = workersForBatch(chains.length, jobs);
+    const groups = splitByPrefix(chains, wanted);
+    const buckets: number[][][] = Array.from({ length: jobs }, () => []);
+    groups.forEach((g, i) => buckets[i % jobs].push(...g));
+
+    const replies = await Promise.all(
+      buckets.map((bucket, i) =>
+        new Promise<{ results: ChainResult[]; legSims: number }>((res, rej) => {
+          if (!bucket.length) return res({ results: [], legSims: 0 });
+          const c = kids[i];
+          const onMessage = (m: any) => {
+            c.off('message', onMessage);
+            if (m?.error) return rej(new Error('worker ' + i + ': ' + m.error));
+            res({ results: m.results as ChainResult[], legSims: m.legSims as number });
+          };
+          c.on('message', onMessage);
+          c.send({ chains: bucket });
+        })
+      )
+    );
+
+    const results: ChainResult[] = [];
+    let legSims = 0;
+    for (const r of replies) {
+      results.push(...r.results);
+      legSims += r.legSims;
+    }
+    legSimTotal += legSims;
+    return { results, legSims, workersUsed: buckets.filter(b => b.length).length };
+  };
+
+  return { evaluate, legSims: () => legSimTotal, close: () => kids.forEach(c => c.kill()) };
+}
+
+/** `--worker`: load the player once, then price whatever arrives over IPC. Never returns. */
+async function runWorker(inputs: SearchInputs): Promise<void> {
+  const evaluator = createChainEvaluator(inputs);
+  let last = 0;
+  process.on('message', (m: any) => {
+    try {
+      const results: ChainResult[] = [];
+      for (const chain of m.chains as number[][]) {
+        const r = evaluator.evaluate(chain);
+        // A null is a chain some leg could not simulate, or one a milestone rejected. The driver
+        // treats an absent result as "not a candidate", which is the correct reading of both.
+        if (r) results.push(r);
+      }
+      const legSims = evaluator.legSims - last;
+      last = evaluator.legSims;
+      process.send!({ results, legSims });
+    } catch (e: any) {
+      process.send!({ error: String(e?.stack || e) });
+    }
+  });
+  process.send!({ ready: true });
+  // Hold the event loop open; the parent kills us when the run ends.
+  await new Promise(() => {});
+}
+
+/**
+ * Every strictly-increasing chain over a pool, priced. No staged search, no pruning, no
+ * heuristics -- the answer is the true optimum of whatever space the pool describes.
+ *
+ * This is `--exhaustive`. It is the only mode that can PROVE anything: the staged search returns
+ * a strong local optimum and says so, and the 4913-chain exhaustive is what established that it
+ * had found rank 1 on the main account. It is also the mode that gets away from you fastest --
+ * C(206,6) is 8.2e10 chains at ~15 s each -- so the count is printed before anything is
+ * simulated and a large one needs --yes.
+ */
+function exhaustiveChains(pool: number[], lo: number, hi: number, final: number, currentTE: number): number[][] {
+  const out: number[][] = [];
+  const walk = (i: number, acc: number[]) => {
+    if (acc.length >= lo - 1 && acc.length <= hi - 1 && acc.length) out.push([...acc, final]);
+    if (acc.length >= hi - 1) return;
+    for (let j = i; j < pool.length; j++) {
+      if (pool[j] >= final) break;
+      if (!acc.length ? pool[j] > currentTE : pool[j] > acc[acc.length - 1]) walk(j + 1, [...acc, pool[j]]);
+    }
+  };
+  walk(0, []);
+  return out;
+}
+
+/**
+ * `--exhaustive`: price every strictly-increasing chain over a pool. No staged search, no
+ * descent, no pruning of any kind -- the winner is the true optimum of the space described,
+ * not a local one.
+ *
+ * This is the only mode that can prove anything, and the reason the README can say "rank 1 of
+ * 4913" about one account at all. It is also the mode that runs away from you fastest: choosing
+ * 6 checkpoints from 185..390 at step 1 is C(206,6) = 8.2e10 chains, which at ~15 s each is
+ * longer than the age of the universe divided by nothing helpful. So the count and a wall-clock
+ * estimate are printed BEFORE anything is simulated, and anything over the cap needs --yes.
+ *
+ * Pool comes from --range lo:hi:step (step defaults to 1) or --grid a,b,c. Length comes from
+ * --prestiges lo-hi, the same flag the grid mode uses.
+ */
+async function runExhaustive(
+  inputs: SearchInputs,
+  o: {
+    jobs: number;
+    tz: string;
+    planStart: number;
+    currentTE: number;
+    final: number;
+    availability: Availability | null;
+    deferShifts: boolean;
+    t0: number;
+  }
+): Promise<void> {
+  const { jobs, currentTE, final } = o;
+
+  let pool: number[];
+  if (arg('grid')) {
+    pool = parseGroup(arg('grid')!);
+  } else {
+    const spec = arg('range');
+    if (!spec) throw new Error('--exhaustive needs --range lo:hi[:step] or --grid a,b,c');
+    const [lo, hi, step] = spec.split(':').map(Number);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) throw new Error('--range must look like 185:390 or 185:390:5');
+    const by = Number.isFinite(step) && step > 0 ? step : 1;
+    pool = [];
+    for (let v = lo; v <= hi; v += by) pool.push(v);
+  }
+  pool = [...new Set(pool)].filter(v => v > currentTE && v < final).sort((a, b) => a - b);
+  if (!pool.length) throw new Error('the pool is empty once values outside (' + currentTE + ', ' + final + ') are dropped');
+
+  const parts = (arg('prestiges', '5-8')!).split('-').map(Number);
+  const lo = parts[0];
+  const hi = parts[1] ?? parts[0];
+
+  const chains = exhaustiveChains(pool, lo, hi, final, currentTE);
+  // ~15 s per chain is the measured floor with a warm prefix memo; sharing makes the real figure
+  // lower, so this over-estimates, which is the direction an "are you sure" wants to err.
+  const hours = (chains.length * 15) / 3600 / Math.max(1, jobs);
+  console.log(
+    '\n--- exhaustive: ' + pool.length + ' pool values, ' + lo + '-' + hi + ' prestiges' +
+    '\n    ' + chains.length.toLocaleString() + ' chains, no pruning' +
+    '\n    rough upper bound ' + (hours < 1 ? (hours * 60).toFixed(0) + ' min' : hours.toFixed(1) + ' h') +
+    ' across ' + jobs + ' process(es)'
+  );
+  const CAP = 5000;
+  if (chains.length > CAP && !has('yes')) {
+    throw new Error(
+      chains.length.toLocaleString() + ' chains is over the ' + CAP.toLocaleString() + ' safety cap. ' +
+      'Coarsen --range, narrow --prestiges, or pass --yes if you mean it.'
+    );
+  }
+  if (!chains.length) throw new Error('no chains: check --range against --prestiges');
+
+  const workers = jobs > 1 ? await makeWorkerPool(jobs) : null;
+  const inline = workers ? null : createChainEvaluator(inputs);
+  let inlineLegSims = 0;
+  const evaluate: EvaluateBatch = workers
+    ? workers.evaluate
+    : async cs => {
+        const results: ChainResult[] = [];
+        for (const c of cs) {
+          const r = inline!.evaluate(c);
+          if (r) results.push(r);
+        }
+        const legSims = inline!.legSims - inlineLegSims;
+        inlineLegSims = inline!.legSims;
+        return { results, legSims, workersUsed: 1 };
+      };
+
+  try {
+    // Chunked so progress is visible and the pool re-deals by prefix each time. Sorted first so
+    // chains sharing a prefix land in the same chunk and the memo actually pays.
+    chains.sort((a, b) => {
+      for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i];
+      return a.length - b.length;
+    });
+    const CHUNK = Math.max(jobs * 8, 64);
+    const cache: CacheEntry[] = [];
+    let legSims = 0;
+    for (let i = 0; i < chains.length; i += CHUNK) {
+      const { results, legSims: n } = await evaluate(chains.slice(i, i + CHUNK));
+      legSims += n;
+      for (const r of results) cache.push({ key: r.chain.join(','), seconds: r.seconds, legs: r.legs });
+      const done = Math.min(i + CHUNK, chains.length);
+      const best = cache.reduce((m, e) => (e.seconds > 0 && e.seconds < m ? e.seconds : m), Infinity);
+      console.log('  ' + done + '/' + chains.length +
+        (Number.isFinite(best) ? '   best ' + (best / 86400).toFixed(3) + ' d' : ''));
+    }
+
+    const ranked = cache.filter(e => e.seconds > 0).sort((a, b) => a.seconds - b.seconds);
+    if (!ranked.length) throw new Error('every chain was rejected -- check --milestone and the TE bounds');
+    report(ranked[0].key.split(',').map(Number), ranked[0].seconds, cache, chains.length, legSims, {
+      ...o,
+      note: 'EXHAUSTIVE over ' + chains.length.toLocaleString() + ' chains: this is the true optimum of that space, not a local one',
+      effort: 'exhaustive',
+    });
+  } finally {
+    workers?.close();
+  }
+}
+
+/**
+ * The browser panel's search, on the command line.
+ *
+ * Same driver, same evaluator, same effort tiers, same coarse scan, same CSV. What differs is
+ * only the plumbing the driver already abstracts: `evaluateBatch` is a process pool instead of a
+ * Web Worker pool, progress goes to stdout instead of a progress bar, and the answer is printed
+ * and optionally written rather than rendered.
+ */
+async function runPlanSearch(
+  inputs: SearchInputs,
+  o: {
+    jobs: number;
+    tz: string;
+    planStart: number;
+    currentTE: number;
+    final: number;
+    availability: Availability | null;
+    deferShifts: boolean;
+    t0: number;
+  }
+): Promise<void> {
+  const { jobs, tz, currentTE, final } = o;
+
+  if (has('exhaustive')) return runExhaustive(inputs, o);
+
+  // The panel labels the tiers Fast / Balanced / Exact / Thorough while the keys are
+  // quick / balanced / normal / thorough. Accept BOTH spellings: someone reaching for the CLI
+  // after using the slider will type what the slider said, and being told "exact" is not a tier
+  // when the screen says EXACT is a pointless thing to be right about.
+  const TIER_ALIASES: Record<string, EffortTier> = { fast: 'quick', exact: 'normal' };
+  const effortRaw = (arg('effort', 'normal') || '').toLowerCase();
+  const effort = (TIER_ALIASES[effortRaw] ?? effortRaw) as EffortTier;
+  if (!(EFFORT_ORDER as readonly string[]).includes(effort)) {
+    throw new Error(
+      '--effort must be one of fast|quick, balanced, exact|normal, thorough (got "' + effortRaw + '")'
+    );
+  }
+
+  // Seed. `--seed "195 219 248"` matches the panel's Starting chain box, final target appended
+  // for you either way. Without one there is nothing to descend from, so --find-seed is required.
+  const seedArg = arg('seed');
+  const seedFromArg = seedArg
+    ? [...new Set(seedArg.trim().split(/\s+/).map(Number).filter(v => v > currentTE && v < final))].sort((a, b) => a - b)
+    : [];
+
+  const minPrestiges = +(arg('min-prestiges', '4')!);
+  const maxPrestiges = +(arg('max-prestiges', '9')!);
+  const pin = +(arg('pin', '0')!);
+
+  if (!seedFromArg.length && !has('find-seed')) {
+    throw new Error('--effort needs a starting point: pass --seed "195 219 248" or --find-seed');
+  }
+
+  const pool = jobs > 1 ? await makeWorkerPool(jobs) : null;
+  // Single-process: evaluate inline. Same evaluator the workers hold, so a --jobs 1 run and a
+  // --jobs 12 run differ only in wall clock, never in the answer.
+  const inline = pool ? null : createChainEvaluator(inputs);
+  let inlineLegSims = 0;
+  const evaluate: EvaluateBatch = pool
+    ? pool.evaluate
+    : async chains => {
+        const results: ChainResult[] = [];
+        for (const c of chains) {
+          const r = inline!.evaluate(c);
+          if (r) results.push(r);
+        }
+        const legSims = inline!.legSims - inlineLegSims;
+        inlineLegSims = inline!.legSims;
+        return { results, legSims, workersUsed: 1 };
+      };
+
+  // Everything priced, for the CSV and for the final ranking. The driver hands back its whole
+  // cache on every batch; keeping the last one is enough and avoids duplicating the bookkeeping.
+  let cache: CacheEntry[] = [];
+
+  try {
+    let seed = seedFromArg.length ? [...seedFromArg, final] : [];
+
+    if (has('find-seed')) {
+      console.log('\n--- coarse scan: finding a starting chain');
+      const coarse = await findStartingChain({
+        currentTE,
+        final,
+        minPrestiges,
+        maxPrestiges,
+        evaluateBatch: evaluate,
+      });
+      for (const line of coarse.log) console.log('  ' + line);
+      seed = coarse.seed;
+      console.log('  seed -> ' + seed.join(' '));
+    }
+
+    const est = estimateChains(Math.max(1, seed.length - 1), EFFORT[effort]);
+    console.log(
+      '\n--- ' + effort + ': up to ~' + est + ' chains, ' +
+      (jobs > 1 ? jobs + ' worker processes' : 'single process') +
+      '\n    seed ' + seed.join(' ') + '  (prestige counts ' + minPrestiges + '-' + maxPrestiges +
+      (pin ? ', first ' + pin + ' pinned' : '') + ')'
+    );
+
+    let lastStage = '';
+    const outcome = await runChainSearch({
+      seedChain: seed,
+      final,
+      currentTE,
+      effort,
+      pin: pin || undefined,
+      minCheckpoints: minPrestiges,
+      maxCheckpoints: maxPrestiges,
+      evaluateBatch: evaluate,
+      onCache: entries => (cache = entries),
+      onProgress: p => {
+        if (p.stage !== lastStage) {
+          lastStage = p.stage;
+          console.log('\n--- ' + p.stage);
+        }
+        if (p.detail) {
+          console.log('  ' + p.detail +
+            (p.bestSeconds > 0 ? '   ' + (p.bestSeconds / 86400).toFixed(3) + ' d  ' + p.bestChain.join(' ') : ''));
+        }
+      },
+    });
+
+    report(outcome.chain, outcome.seconds, cache, outcome.chainsEvaluated, outcome.legSims, {
+      ...o,
+      note: outcome.stoppedEarly
+        ? 'stopped early; answer is what "' + outcome.lastCompletedStage + '" guarantees'
+        : 'completed through ' + outcome.lastCompletedStage,
+      effort,
+    });
+  } finally {
+    pool?.close();
+  }
+}
+
+/** Print the answer, and write the panel's own CSV when asked. Shared by both new modes. */
+function report(
+  chain: number[],
+  seconds: number,
+  cache: CacheEntry[],
+  chainsEvaluated: number,
+  legSims: number,
+  o: {
+    tz: string;
+    planStart: number;
+    currentTE: number;
+    final: number;
+    availability: Availability | null;
+    deferShifts: boolean;
+    t0: number;
+    note: string;
+    effort: string;
+  }
+): void {
+  const mins = (Date.now() - o.t0) / 60000;
+  console.log('\n=== done  (' + mins.toFixed(1) + ' min, ' + chainsEvaluated + ' chains, ' + legSims + ' leg sims)');
+  console.log('    ' + o.note);
+  console.log('\n  ' + (seconds / 86400).toFixed(3) + ' d   ' + chain.join(' '));
+  console.log('    ends ' + new Date((o.planStart + seconds) * 1000).toLocaleString('en-US', { timeZone: o.tz }));
+
+  const ranked = [...cache].filter(e => e.seconds > 0).sort((a, b) => a.seconds - b.seconds);
+  const top = +(arg('top', '10')!);
+  if (top > 0 && ranked.length > 1) {
+    console.log('\n  next best:');
+    for (const e of ranked.slice(1, top + 1)) {
+      console.log('    ' + (e.seconds / 86400).toFixed(3) + ' d  +' +
+        ((e.seconds - seconds) / 86400).toFixed(3) + ' d   ' + e.key.split(',').join(' '));
+    }
+  }
+
+  const csv = arg('csv');
+  if (csv) {
+    const raw = (simContext() as any).rawBackup ?? null;
+    writeFileSync(
+      csv,
+      buildChainsCsv(ranked, {
+        planStart: o.planStart,
+        timezone: o.tz,
+        currentTE: o.currentTE,
+        final: o.final,
+        effort: o.effort,
+        forceContinue: has('force-continue'),
+        availability: o.availability,
+        seedChain: chain,
+        inventory: raw ? describeVirtueInventory(raw) : undefined,
+        loadouts: [],
+      })
+    );
+    console.log('\n  ' + ranked.length + ' chains -> ' + csv);
+  }
+}
+
 async function runSharded(jobs: number): Promise<void> {
   const { fork } = await import('node:child_process');
   const out = arg('out');
@@ -802,9 +1375,15 @@ async function runSharded(jobs: number): Promise<void> {
 }
 
 async function main() {
+  if (has('help') || process.argv.length <= 2) return printHelp();
+
   const t0 = Date.now();
   const jobs = +(arg('jobs', '1')!);
-  if (jobs > 1 && !arg('shard')) return runSharded(jobs);
+  // `runSharded` forks one child per shard of a FIXED candidate list and merges their CSVs. The
+  // staged search has no fixed list -- it decides the next batch from the last one's answer -- so
+  // it does its own parallelism with a persistent pool instead. A worker must never re-shard.
+  const planMode = has('effort') || has('exhaustive');
+  if (jobs > 1 && !arg('shard') && !planMode && !has('worker')) return runSharded(jobs);
 
   await loadPlayer();
 
@@ -841,6 +1420,13 @@ async function main() {
   if (sleepFrom !== undefined && availFrom !== undefined) {
     throw new Error('use --sleep-from/--sleep-until OR --available-from/--available-to, not both');
   }
+
+  // Hold each SHIFT for the schedule too, not just the prestige between ascensions. ON by
+  // default whenever a schedule is set, matching the browser panel's own default: it is what
+  // "plan around my schedule" plainly means, and without it the search reports night shifts and
+  // plans around none of them. `--no-hold-shifts` restores the reported-but-free behaviour every
+  // accuracy figure before this feature was measured with.
+  const deferShifts = !has('no-hold-shifts');
 
   let availability: Availability | null = null;
   if (sleepFrom !== undefined || availFrom !== undefined || availDays !== undefined) {
@@ -891,6 +1477,14 @@ async function main() {
   const currentTE = snap?.teEarned
     ? (Object.values(snap.teEarned as Record<VirtueEgg, number>) as number[]).reduce((a, b) => a + b, 0)
     : 0;
+
+  const inputs = planInputs({ planStart, currentTE, final, availability, milestones: usable, deferShifts });
+
+  // `--worker`: a pool member. Loads the player above like anyone else, then serves chains over
+  // IPC forever. Must come before every other mode, and never returns.
+  if (has('worker')) return runWorker(inputs);
+
+  if (planMode) return runPlanSearch(inputs, { jobs, tz, planStart, currentTE, final, availability, deferShifts, t0 });
 
   // Build the candidate list. --stages is a Cartesian product (one pick per
   // group, in order); --grid + --prestiges enumerates subsets of a shared pool.

@@ -41,6 +41,34 @@ function makeEvaluator(optimum: number[]): { evaluate: EvaluateBatch; calls: num
 }
 
 describe('runChainSearch', () => {
+  /**
+   * The last checkpoint must be swept even when the seed puts it outside the legal range.
+   *
+   * `maxLast` (final - 150 = 340 here) caps the last checkpoint, but nothing that PRODUCES a seed
+   * respects that cap -- the coarse scan sweeps a fixed 185..390 grid and returns whatever won.
+   * `resolveLast` used to centre its window on the incoming value, so a seed of 360 gave
+   * `lo = 348 > hi = 340`, an empty window, and a silent return. It then no-opped for the whole
+   * run, including the re-solve after every accepted descent move, leaving the last checkpoint to
+   * drift by descent's +-8 alone.
+   *
+   * Observed on a real 9795-chain `thorough` run: it settled at 742.378 d with A6=359 while
+   * 741.500 d sat at A6=328 -- inside the range this sweep was supposed to cover, and never priced.
+   * The optimum below is 31 away from the seed for exactly that reason: a radius-8 descent cannot
+   * bridge it, so only a working sweep can.
+   */
+  it('sweeps the last checkpoint even when the seed starts above maxLast', async () => {
+    const optimum = [195, 219, 248, 286, 328];
+    const { evaluate } = makeEvaluator(optimum);
+    const out = await runChainSearch({
+      seedChain: [195, 219, 248, 286, 360, FINAL],
+      final: FINAL,
+      currentTE: CURRENT_TE,
+      effort: 'quick',
+      evaluateBatch: evaluate,
+    });
+    expect(out.chain).toEqual([...optimum, FINAL]);
+  });
+
   it('finds a separable optimum by coordinate descent', async () => {
     const optimum = [195, 219, 248, 286, 327];
     const { evaluate } = makeEvaluator(optimum);
