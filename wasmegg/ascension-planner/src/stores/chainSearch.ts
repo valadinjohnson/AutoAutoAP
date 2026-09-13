@@ -41,6 +41,7 @@ import {
 } from '@/search/csv';
 import { type ShortlistRow } from '@/search/shortlist';
 import { buildView, type ViewId } from '@/search/views';
+import { buildSubmission, submissionFilename, type Submission } from '@/search/submission';
 import { describeAvailability, isConstrained, type Availability } from '@/search/availability';
 import { missedMilestones, usableMilestones, type Milestone } from '@/search/milestones';
 import {
@@ -153,7 +154,6 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
   const droppedMilestones = computed(() =>
     milestones.value.filter(m => !activeMilestones.value.some(a => a.te === m.te && a.by === m.by))
   );
-
 
   const isRunning = ref(false);
   const stopRequested = ref(false);
@@ -521,6 +521,88 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       }) ?? equippedNow;
 
     return { artifacts, stones, earnings: getOptimalEarningsSet(raw), elr, equippedNow };
+  }
+
+  /**
+   * Build the shareable summary of this run.
+   *
+   * Deliberately NOT the CSV. The CSV is the run's full working -- ten thousand rows, every
+   * candidate, local timestamps on every leg -- and it exists so the player can audit their own
+   * search. A submission is the handful of fields a leaderboard needs, assembled by whitelist in
+   * `search/submission.ts`, so a field added to the CSV later cannot leak by being forgotten
+   * about here.
+   */
+  function buildRunSubmission(nickname?: string): Submission | null {
+    if (!bestChain.value.length || bestDays.value <= 0) return null;
+    const inv = readInventory();
+    return buildSubmission({
+      nickname,
+      chain: [...bestChain.value],
+      seconds: bestDays.value * 86400,
+      legs: bestLegs.value,
+      planStart: planStartUsed.value || planStart.value,
+      timezone: useAutoPlannerStore().timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+      currentTE: currentTE.value,
+      finalTE: finalTE.value,
+      effort: effort.value,
+      availability: isConstrained(availability.value) ? availability.value : null,
+      holdShifts: deferShifts.value,
+      artifacts: inv.artifacts,
+      stones: inv.stones,
+      chainsPriced: csvRows.value,
+    });
+  }
+
+  /**
+   * Where a submission is sent, or empty when nowhere is configured.
+   *
+   * Read from the build's environment rather than hardcoded, because this project is forked and
+   * self-hosted and there is no single collector anyone should be posting to by default. With it
+   * unset the UI falls back to "save the file and share it yourself", which needs no server at
+   * all and is the only mode that works offline.
+   */
+  const submitUrl = (import.meta.env.VITE_SUBMIT_URL as string | undefined)?.trim() || '';
+
+  /**
+   * Ship it. Resolves to a short status string for the UI; never throws.
+   *
+   * The CSV goes as a SEPARATE request rather than as a field in the JSON, for two reasons: it is
+   * megabytes of text that would have to be escaped into a string first, and the headline result
+   * is worth keeping even when the bulky half fails. A failed CSV upload therefore downgrades the
+   * message rather than failing the whole submission.
+   */
+  async function sendSubmission(payload: Submission, csv?: string): Promise<{ ok: boolean; message: string }> {
+    if (!submitUrl) return { ok: false, message: 'no collector configured' };
+    let id: string | undefined;
+    try {
+      const res = await fetch(submitUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) return { ok: false, message: `collector said ${res.status}` };
+      id = ((await res.json().catch(() => ({}))) as { id?: string }).id;
+    } catch (e) {
+      // Ordinary: someone is offline, or the collector is down. It must not look like the run
+      // broke.
+      return { ok: false, message: e instanceof Error ? e.message : 'could not reach the collector' };
+    }
+
+    if (!csv) return { ok: true, message: 'sent' };
+    if (!id) return { ok: true, message: 'sent (no id came back, so the CSV was skipped)' };
+    try {
+      const csvUrl = `${submitUrl.replace(/\/submit\/?$/, '/csv')}?id=${encodeURIComponent(id)}`;
+      const res = await fetch(csvUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'text/csv' },
+        body: csv,
+      });
+      return res.ok
+        ? { ok: true, message: 'sent, with the full CSV' }
+        : { ok: true, message: `sent, but the CSV was refused (${res.status})` };
+    } catch {
+      return { ok: true, message: 'sent, but the CSV upload failed' };
+    }
   }
 
   function exportCsv(): string {
@@ -912,6 +994,10 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     checkResumable,
     discardCheckpoint,
     exportCsv,
+    buildRunSubmission,
+    sendSubmission,
+    submitUrl,
+    submissionFilename,
     readInventory,
     csvFilename,
     applyChain,

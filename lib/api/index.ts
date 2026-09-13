@@ -11,8 +11,30 @@ export * from './encode';
 export * from './utils';
 export * from './version';
 
-const API_ROOT = 'https://egg-forwarder.carpet.workers.dev/?url=https://www.auxbrain.com';
-const AUTH_API_ROOT = 'https://egg-auth-worker.carpet.workers.dev';
+/**
+ * Where API calls are forwarded.
+ *
+ * The game's API sends no CORS headers, so every browser request goes through a Cloudflare
+ * Worker that adds them. The default is the upstream one, and it accepts requests only from
+ * origins on its own allowlist -- carpet's Netlify domains, localhost, 127.0.0.1 and private
+ * 192.168 addresses (see wasmegg/_proxy/index.js). A fork served from anywhere else -- a custom
+ * domain, a tunnel, a LAN host that is not 192.168 -- is refused, and it looks like the app is
+ * broken rather than like a deployment that needs its own proxy.
+ *
+ * So both roots are overridable at build time. Unset, nothing changes for anyone:
+ *
+ *   VITE_EGG_PROXY=https://my-proxy.workers.dev
+ *   VITE_EGG_AUTH_PROXY=https://my-auth-worker.workers.dev
+ *
+ * `import.meta.env` is guarded because this module is also bundled for Node by
+ * vite.search.config.ts, and a bare property read would throw wherever vite has not defined it.
+ */
+const ENV: Record<string, string | undefined> =
+  (typeof import.meta !== 'undefined' && (import.meta as { env?: Record<string, string | undefined> }).env) || {};
+
+const PROXY_ROOT = ENV.VITE_EGG_PROXY?.replace(/\/+$/, '') || 'https://egg-forwarder.carpet.workers.dev';
+const API_ROOT = `${PROXY_ROOT}/?url=https://www.auxbrain.com`;
+const AUTH_API_ROOT = ENV.VITE_EGG_AUTH_PROXY?.replace(/\/+$/, '') || 'https://egg-auth-worker.carpet.workers.dev';
 
 // Endpoints that must be routed through the authenticated API worker.
 const AUTH_ENDPOINTS = new Set(['/ei_ctx/get_contracts_info', '/ei_ctx/get_contract_player_info']);

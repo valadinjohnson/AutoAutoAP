@@ -1091,9 +1091,9 @@
 
         <p class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed">
           Every view above reads the <span class="font-semibold">{{ store.csvRows.toLocaleString() }}</span>
-          chains this run priced — switching costs nothing and re-simulates nothing. A chain missing from
-          all of them was almost certainly never evaluated rather than evaluated and beaten: the search
-          stays in its own neighbourhood. Download the CSV for the full list.
+          chains this run priced — switching costs nothing and re-simulates nothing. A chain missing from all of them
+          was almost certainly never evaluated rather than evaluated and beaten: the search stays in its own
+          neighbourhood. Download the CSV for the full list.
         </p>
       </div>
 
@@ -1182,6 +1182,139 @@
           </div>
         </div>
       </details>
+
+      <!-- Share the result.
+           Sending a player's data somewhere else is the one genuinely irreversible thing this
+           panel can do, so it is built to be refused easily: nothing happens without a click,
+           the exact payload is inspectable BEFORE the click, and with no collector configured
+           the only option is a file the player hands over themselves. -->
+      <div
+        v-if="store.bestDays > 0 && !store.isRunning"
+        class="p-4 rounded-xl border border-indigo-200 bg-indigo-50/40 space-y-3"
+      >
+        <h3 class="text-[10px] font-black text-indigo-700 uppercase tracking-widest">Share this result</h3>
+
+        <p class="text-[11px] text-indigo-900/80 leading-relaxed">
+          <span class="font-bold">Contribute to the virtue track and the leaderboards.</span>
+          Pooling results across accounts is the only way to answer questions one account cannot: whether the effort
+          tiers behave the same everywhere, whether
+          <span class="font-mono">maxLast</span> is right, whether a chain shape that wins here wins anywhere else.
+        </p>
+
+        <!-- OPT IN, UNCHECKED. Nothing leaves the machine until this is deliberately ticked;
+             the submit and save buttons stay disabled until it is. Defaulting this on would make
+             the consent text below decorative. -->
+        <label class="flex items-start gap-3 cursor-pointer">
+          <input
+            v-model="optIn"
+            type="checkbox"
+            class="mt-0.5 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+          />
+          <span class="text-[11px] text-indigo-900 leading-relaxed">
+            <span class="font-bold">Yes, contribute this result.</span>
+            I have read what is included below.
+          </span>
+        </label>
+
+        <div v-if="optIn" class="space-y-3">
+          <div class="flex flex-wrap items-center gap-4">
+            <label class="flex items-center gap-2 cursor-pointer text-[11px] font-bold text-indigo-900">
+              <input v-model="anonymous" type="radio" :value="true" class="text-indigo-600 focus:ring-indigo-500" />
+              Submit anonymously
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer text-[11px] font-bold text-indigo-900">
+              <input v-model="anonymous" type="radio" :value="false" class="text-indigo-600 focus:ring-indigo-500" />
+              Credit me as
+            </label>
+            <input
+              v-model="nickname"
+              type="text"
+              maxlength="40"
+              :disabled="anonymous"
+              placeholder="nickname"
+              aria-label="Nickname"
+              class="rounded-lg border-indigo-200 text-sm font-bold text-slate-800 w-48 disabled:opacity-40"
+            />
+          </div>
+
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input
+              v-model="includeCsv"
+              type="checkbox"
+              class="mt-0.5 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            <span class="text-[11px] text-indigo-900/80 leading-relaxed">
+              <span class="font-bold">Include the full CSV</span> — every chain this run priced, one row per leg ({{
+                (store.csvRows || 0).toLocaleString()
+              }}
+              chains). The JSON above is the headline; this is the working. It makes real analysis possible and it is a
+              few megabytes.
+            </span>
+          </label>
+        </div>
+
+        <div class="flex flex-wrap items-end gap-3">
+          <button
+            type="button"
+            class="px-3 py-2 rounded-lg border border-indigo-300 text-indigo-700 text-[10px] font-black uppercase tracking-widest hover:bg-white"
+            :aria-expanded="showPayload"
+            @click="showPayload = !showPayload"
+          >
+            {{ showPayload ? '&#8964; Hide' : '&#8250; Show' }} exactly what is sent
+          </button>
+
+          <button
+            v-if="store.submitUrl"
+            type="button"
+            :disabled="!optIn || submitState === 'sending'"
+            class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500 disabled:opacity-40"
+            @click="submit"
+          >
+            {{ submitState === 'sending' ? 'Sending...' : 'Submit result' }}
+          </button>
+
+          <button
+            type="button"
+            :disabled="!optIn"
+            class="px-4 py-2 rounded-lg border border-indigo-300 text-indigo-700 text-[10px] font-black uppercase tracking-widest hover:bg-white disabled:opacity-40"
+            @click="downloadSubmission"
+          >
+            Save the file instead
+          </button>
+
+          <span
+            v-if="submitMessage"
+            class="text-[11px] font-semibold"
+            :class="submitOk ? 'text-emerald-700' : 'text-rose-700'"
+          >
+            {{ submitMessage }}
+          </span>
+        </div>
+
+        <pre
+          v-if="showPayload"
+          class="max-h-64 overflow-auto rounded-lg bg-slate-900 p-3 text-[10px] leading-relaxed text-slate-200"
+          >{{ payloadPreview }}</pre>
+
+        <p class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed">
+          <span class="font-black uppercase tracking-wide">What this does and does not include.</span>
+          It is built from a fixed list of fields, not by stripping things out of the CSV, so nothing added to the CSV
+          later can leak by being forgotten here. Your
+          <span class="font-semibold">player ID is not in it</span> — it was never in the CSV either. What
+          <em>is</em> in it and is still identifying: <span class="font-semibold">your artifact inventory</span>, which
+          with exact counts is close to a fingerprint among people who know you; your
+          <span class="font-semibold">timezone</span> and local plan start; and your
+          <span class="font-semibold">available hours</span>. The inventory is included because a duration means nothing
+          without knowing what it was simulated with — the same plan on commons is a different claim. If that trade is
+          not worth it to you, do not send it.
+        </p>
+
+        <p v-if="!store.submitUrl" class="text-[11px] text-indigo-900/70 leading-relaxed">
+          No collector is configured in this build, so there is nowhere to submit to and the button is not shown.
+          <span class="font-semibold">Save the file</span> and share it however you like. Self-hosting: set
+          <span class="font-mono">VITE_SUBMIT_URL</span> at build time.
+        </p>
+      </div>
 
       <!-- Every chain the run priced, one row per leg. Safe to take mid-run. -->
       <div
@@ -1284,6 +1417,61 @@ function toggleInventory(): void {
  * of text, and `data:` URLs are length-capped in some browsers, which would truncate exactly the
  * big runs worth exporting.
  */
+/** Consent. Unchecked by default and gates every path that moves data off the machine --
+ *  including the local save, because a file on disk is the first step to sharing one. */
+const optIn = ref(false);
+/** Anonymous by default: crediting yourself should be a choice, not the fallback. */
+const anonymous = ref(true);
+/** Free text the player may attach. Never derived from the account, and ignored when anonymous. */
+const nickname = ref('');
+/** Send the run's full CSV alongside the JSON. Off by default: it is a few megabytes and the
+ *  headline answer does not need it. */
+const includeCsv = ref(false);
+const showPayload = ref(false);
+const submitState = ref<'idle' | 'sending' | 'done'>('idle');
+const submitMessage = ref('');
+const submitOk = ref(false);
+
+/** The payload, pretty-printed, so "show exactly what is sent" is the literal bytes and not a
+ *  summary someone has to trust. */
+/** What a nickname actually resolves to. Anonymous wins over whatever is typed in the box, so
+ *  a half-typed name cannot be sent by someone who then picked anonymous. */
+const effectiveNickname = computed(() => (anonymous.value ? '' : nickname.value));
+
+const payloadPreview = computed(() => {
+  const p = store.buildRunSubmission(effectiveNickname.value);
+  return p ? JSON.stringify(p, null, 2) : 'nothing to share yet - run a search first';
+});
+
+async function submit(): Promise<void> {
+  if (!optIn.value) return;
+  const payload = store.buildRunSubmission(effectiveNickname.value);
+  if (!payload) return;
+  submitState.value = 'sending';
+  submitMessage.value = '';
+  const res = await store.sendSubmission(payload, includeCsv.value ? store.exportCsv() : undefined);
+  submitState.value = 'done';
+  submitOk.value = res.ok;
+  submitMessage.value = res.ok ? `Thank you — ${res.message}` : `Not sent: ${res.message}`;
+}
+
+/** The offline path, and the only one available with no collector configured. Same Blob dance as
+ *  the CSV: a `data:` URI is length-capped in some browsers. */
+function downloadSubmission(): void {
+  if (!optIn.value) return;
+  const payload = store.buildRunSubmission(effectiveNickname.value);
+  if (!payload) return;
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = store.submissionFilename(payload);
+  a.click();
+  URL.revokeObjectURL(url);
+  submitOk.value = true;
+  submitMessage.value = 'Saved. Share it wherever you like.';
+}
+
 function downloadCsv(): void {
   const blob = new Blob([store.exportCsv()], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);

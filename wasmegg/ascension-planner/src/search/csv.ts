@@ -107,6 +107,10 @@ export function describeLoadout(loadout: EquippedArtifact[] | null | undefined):
 export interface InventoryCount {
   label: string;
   count: number;
+  /** Artifact family, e.g. `puzzle-cube`. Carried so consumers can filter by family without
+   *  parsing the human label back apart — `submission.ts` keeps only the families a virtue
+   *  ascension can actually equip. Absent only for an item whose family could not be resolved. */
+  familyId?: string;
 }
 
 /** The virtue inventory split into artifacts and stones, counted, sorted by label. The UI renders
@@ -115,9 +119,14 @@ export function virtueInventory(rawBackup: unknown): { artifacts: InventoryCount
   const db = (rawBackup as { artifactsDb?: { virtueAfxDb?: { inventoryItems?: unknown[] } } })?.artifactsDb
     ?.virtueAfxDb;
   const items = db?.inventoryItems;
-  const artifacts = new Map<string, number>();
-  const stones = new Map<string, number>();
+  const artifacts = new Map<string, { count: number; familyId?: string }>();
+  const stones = new Map<string, { count: number; familyId?: string }>();
   if (!Array.isArray(items) || !items.length) return { artifacts: [], stones: [] };
+  const bump = (m: Map<string, { count: number; familyId?: string }>, label: string, n: number, familyId?: string) => {
+    const cur = m.get(label);
+    if (cur) cur.count += n;
+    else m.set(label, { count: n, familyId });
+  };
   for (const raw of items) {
     const item = raw as { quantity?: number; artifact?: { spec?: { name?: number; level?: number; rarity?: number } } };
     const spec = item?.artifact?.spec;
@@ -131,15 +140,17 @@ export function virtueInventory(rawBackup: unknown): { artifacts: InventoryCount
     const n = typeof item.quantity === 'number' && item.quantity > 0 ? item.quantity : 1;
     const stone = getStone(`${tier.family.id}-${tier.tier_number}`);
     if (stone) {
-      stones.set(stone.label, (stones.get(stone.label) ?? 0) + n);
+      bump(stones, stone.label, n, stone.familyId);
       continue;
     }
     const art = getArtifact(`${tier.family.id}-${tier.tier_number}-${spec.rarity ?? 0}`);
-    if (art) artifacts.set(art.label, (artifacts.get(art.label) ?? 0) + n);
+    if (art) bump(artifacts, art.label, n, art.familyId);
   }
 
-  const list = (m: Map<string, number>): InventoryCount[] =>
-    [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([label, count]) => ({ label, count }));
+  const list = (m: Map<string, { count: number; familyId?: string }>): InventoryCount[] =>
+    [...m.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([label, v]) => ({ label, count: v.count, ...(v.familyId ? { familyId: v.familyId } : {}) }));
   return { artifacts: list(artifacts), stones: list(stones) };
 }
 

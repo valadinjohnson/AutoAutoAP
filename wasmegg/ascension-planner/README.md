@@ -26,15 +26,35 @@ found -- and which parts of that are measured versus guessed.
 
 ## Current answers
 
-| account | chain | duration | ends | status |
-|---|---|---|---|---|
-| main | `195 219 248 286 327 490` | 741.965 d | Fri 2028-09-15 18:00 MDT | **rank 1 of a 4913-chain exhaustive** |
-| alt | `133 159 182 201 227 254 290 490` | 948.145 d | Wed 2029-04-10 00:58 MDT | best found; being re-verified |
+**Unconstrained** — no schedule, prestige the instant each target is hit:
 
-Durations are measured from a plan start of `2026-09-04 18:51` (main) and `21:30` (alt),
-America/Denver. **Durations from different plan starts are not comparable** — the end
-date is the invariant. This has caused real confusion: a run that reported 741.220 d
-looked better than 741.965 d but finished five hours *later*.
+| account | chain | duration | plan start | status |
+|---|---|---|---|---|
+| main | `195 219 248 286 327 490` | 741.965 d | 2026-09-04 18:51 | **rank 1 of a 4913-chain exhaustive** |
+| alt | `133 159 182 201 227 254 290 490` | 948.145 d | 2026-09-04 21:30 | best found |
+
+**With a schedule**, which is a different question and not comparable to the rows above —
+prestiges and shifts are held until the player is available and the delay is charged:
+
+| account | chain | duration | window | plan start | ends |
+|---|---|---|---|---|---|
+| main | `182 195 228 257 285 322 490` | 739.476 d | 07:00–23:00 | 2026-09-09 19:04 | Mon 2028-09-18 06:29 |
+| main | `195 228 257 285 322 490` | 739.476 d | 07:00–23:00 | 2026-09-09 19:04 | Mon 2028-09-18 06:29 |
+| alt | `136 161 199 222 252 291 490` | 946.058 d | 09:00–23:00 | 2026-09-11 22:22 | Sat 2029-04-14 23:45 |
+
+The two main rows tie to four decimal places. The **six**-ascension chain finishes at the
+same moment as the seven-ascension one, which is one fewer complete rebuild — twelve shifts
+and a fresh research grind — for nothing. Prefer it.
+
+**Durations from different plan starts are not comparable** — the end date is the
+invariant. This has caused real confusion: a run reporting 741.220 d looked better than
+741.965 d and finished five hours *later*.
+
+Comparing the constrained main answer against the older 741.500 d run is also not
+straightforward: that one used a 09:00–23:00 window against this one's 07:00–23:00. Across
+the **372 chains both runs priced**, the wider window is worth a **median +0.787 d**, so
+roughly 1.2 d of the improvement is the last-checkpoint fix and the rest is the extra two
+hours a day.
 
 ---
 
@@ -106,11 +126,75 @@ stop — something in the build differs and every result would be suspect.
 
 ## Running a search
 
+`fastsearch` runs the **same search the browser panel runs** -- it imports
+`src/search/driver.ts` and `src/search/chain.ts` directly, so there is one staged search
+with two front ends rather than two implementations that can disagree:
+
+```bash
+pnpm search:build
+node dist-search/fastsearch.js --backup me.json --effort thorough --find-seed --jobs 12 --csv run.csv
+```
+
+`node dist-search/fastsearch.js --help` lists every flag, grouped the way the panel groups
+its settings. Everything the panel exposes has one: `--effort`, `--seed`, `--find-seed`,
+`--min-prestiges` / `--max-prestiges`, `--pin`, `--available-from` / `--available-to` /
+`--available-days`, `--no-hold-shifts`, `--milestone`, `--final`, `--start-date` /
+`--start-time` / `--timezone`, `--force-continue`, `--csv`.
+
+**`--backup file.json` runs fully offline** -- nothing is fetched, so an air-gapped machine
+with a saved backup runs the whole thing. `--player-id` is the only flag that touches the
+network, and `--save-backup` writes what it fetched so you only need it once.
+
+### Proving it, rather than trusting it
+
+The staged search returns a strong local optimum. `--exhaustive` prices **every**
+strictly-increasing chain over a pool with no staged search and no pruning of any kind, so
+its winner is the true optimum of that space:
+
+```bash
+node dist-search/fastsearch.js --backup me.json --exhaustive --range 185:390:15 --prestiges 6-7 --jobs 12
+```
+
+The chain count and a wall-clock estimate are printed before anything is simulated, and
+anything over 5000 chains needs `--yes`. That matters: choosing 6 checkpoints from 185..390
+at step 1 is C(206,6) = 8.2e10 chains. Coarsen `--range` until the estimate is bearable,
+then narrow around the winner.
+
+### Reading the results (browser)
+
+The panel's runners-up table is one of five **views** over the same priced chains. Switching
+re-reads the run's cache and simulates nothing, so it is instant:
+
+| view | what it shows |
+|---|---|
+| A good mix | the leader, the best chain at each other ascension count, then genuinely different plans. The default, and the only view that filters |
+| Fastest | the raw ranking, nothing dropped. Expect near-duplicates: a sweep prices dozens of chains differing by one TE |
+| Kindest to my schedule | sorted by time spent waiting for you, not by length |
+| By ascension count | best chain at each count. One fewer rebuild for half a day is a trade worth seeing |
+| By finish date | one chain per calendar day it could finish on |
+
+**No view filters by schedule fit.** A chain whose shifts land outside your hours is a real
+option with a real cost; the cost gets a column and the choice stays yours.
+
+Two behaviours worth knowing because they would otherwise look like bugs. A chain replayed
+from a saved checkpoint kept no per-leg detail, so its waiting cost is *unknown* rather than
+zero — it sorts last under "Kindest to my schedule" and shows `not recorded`. And "By finish
+date" needs a plan start to know which day a chain lands on; without one it falls back to the
+ranking rather than collapsing every chain onto the same epoch day.
+
+### The older Python driver
+
+`scripts/autoplan.py` predates the shared driver and reimplements the staged search in
+Python, driving `fastsearch --stages` batch by batch. It still works and its flags are
+unchanged:
+
 ```bash
 python scripts/autoplan.py --player-id EI1234567890123456 --backup me.json --effort balanced --jobs 12 --yes
 ```
 
-`--player-id` fetches the save (needs network); `--backup file.json` runs fully offline.
+Prefer `--effort` on `fastsearch` for anything new. The duplication is not free: the
+`resolve_last` bug that left the last checkpoint unswept existed in **both** copies and had
+to be found and fixed twice.
 
 ### Effort tiers
 
@@ -122,7 +206,14 @@ losing patience still leaves you the lower tier's answer.
 | `quick` | descent | ~1h05m | 0 / 5 / 5 / 61 / **150** h behind the best found (5 obs) |
 | `balanced` | + 2-D slices | ~2h55m | 1.3 h and 0 h (2 accounts) |
 | `normal` | + count probe | ~3h30m | **exact** — matched the 4913-chain exhaustive (n=1) |
-| `thorough` | + 3-D slices | 7–13 h | **refused** by the 5-hour budget guard |
+| `thorough` | + 3-D slices | 7–13 h | one 1.665 d win on the alt; nothing to add on the main |
+
+> **Every figure in that table was measured before the last-checkpoint sweep was fixed**, and
+> they are therefore **pessimistic by an unknown amount**. On the main the fix was worth
+> roughly 1.2 d on its own; on the alt it changed nothing, because the bug only bit when the
+> coarse scan proposed a last checkpoint above `maxLast` and the alt's never did. Re-measuring
+> the tiers is several account-days of compute and has not been done. Treat the table as a
+> floor, not an estimate.
 
 Accuracy is stated as hours behind the best answer *found*, with the sample size. There
 are no confidence percentages here on purpose: three to five observations cannot honestly
@@ -364,3 +455,6 @@ carry that player's save data by reference. Ask if you want them for review.
 What *is* shipped is the part anyone can re-run: `src/search/*.spec.ts`, including a
 fixture test that reproduces the CLI's 741d 23h to the hour against a real backup, and the
 CLI itself -- so any claim here can be checked against your own account.
+
+See [FOR_MATH_NERDS.md](FOR_MATH_NERDS.md) for the combinatorics, the dead ends with their
+numbers, and an explicit split between what is measured and what is a hunch.

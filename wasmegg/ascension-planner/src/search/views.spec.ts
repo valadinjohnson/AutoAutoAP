@@ -109,7 +109,10 @@ describe('buildView', () => {
     const entries = [entry([195, 219, 490], 700), { key: '195,300,490', seconds: 0, legs: [] }];
     for (const v of VIEWS) {
       const rows = buildView(entries, v.id, { planStart: 1, timezone: 'UTC' });
-      expect(rows.every(r => r.seconds > 0), v.id).toBe(true);
+      expect(
+        rows.every(r => r.seconds > 0),
+        v.id
+      ).toBe(true);
     }
   });
 
