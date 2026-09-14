@@ -1,16 +1,16 @@
 /**
  * Measured data behind the Chain Search explainer's figures.
  *
- * Every number here is simulator output from exhaustive sweeps — no model, no fit, no smoothing.
- * Regenerating means re-running the sweeps and pasting the result; nothing computes these at
- * runtime, because the point of the figures is that they are evidence rather than illustration.
+ * Every number here is simulator output from exhaustive sweeps, with no model or curve fitting
+ * involved. Regenerating means re-running the sweeps and pasting the result. Nothing is computed at
+ * runtime, since the figures are meant to be evidence.
  *
- * Both corpora are from one account (start TE 170 / 173) and are stated as such wherever they are
- * rendered. They are not a claim about anybody else's account.
+ * Both corpora come from one account (start TE 170 / 173), and the UI says so wherever it renders
+ * them. They make no claim about anybody else's account.
  */
 
 /** A 21-wide sweep of the LAST checkpoint with the rest of the chain pinned: `195 226 277 X 490`.
- *  This is the sawtooth itself — descending runs a few TE wide, separated by one missed sale. */
+ *  This is the sawtooth itself: descending runs a few TE wide, separated by one missed sale. */
 export const SAWTOOTH = {
   prefix: '195 226 277',
   target: 490,
@@ -96,12 +96,12 @@ export const SEED_SENSITIVITY = {
 
 /** Shape statistics over every full 21-wide last-checkpoint sweep in the 490 box. */
 export const SAWTOOTH_STATS = {
-  /** Median size of an upward jump, in days — one missed Research Sale END. */
+  /** Median size of an upward jump, in days. One jump is one missed Research Sale END. */
   jumpMedianDays: 3.167,
   jumpP25Days: 2.917,
   jumpP75Days: 3.25,
   jumpCount: 2598,
-  /** Share of descending runs that are 3-5 TE long — the reason a radius-8 window is enough. */
+  /** Share of descending runs that are 3-5 TE long, which is why a radius-8 window is enough. */
   runLength35Pct: 82.3,
   /** Sweeps whose minimum sat on a run-end (immediately before a jump), out of those swept in full. */
   runEndHits: 462,

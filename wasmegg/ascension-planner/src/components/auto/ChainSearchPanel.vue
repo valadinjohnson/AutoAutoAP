@@ -39,13 +39,12 @@
         </p>
       </div>
 
-      <!-- The maths, then the algorithm, then the controls. Someone who has never seen this panel
-           is being asked to commit hours of their own CPU; the case for doing that has to come
-           before the knobs, not after them. -->
+      <!-- Maths, then algorithm, then controls. This panel asks someone for hours of their own
+           CPU, so the reasons to say yes come before the knobs. -->
       <ChainSearchExplainer />
 
-      <!-- Settings. Collapsible because a reader on their second visit wants the button, not the
-           essay — but open by default, since a collapsed form looks like there is nothing here. -->
+      <!-- Collapsible so a repeat visitor can skip straight to the button. Open by default; a
+           collapsed form looks like an empty panel. -->
       <div class="rounded-xl border border-slate-200 bg-white overflow-hidden">
         <button
           type="button"

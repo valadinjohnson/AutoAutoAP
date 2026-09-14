@@ -436,8 +436,8 @@
       </div>
 
       <div v-else-if="plannerTab === 'automatic' && playerId && !loading">
-        <!-- The header above is tall on first load, so on a laptop the tool itself opens below the
-             fold and the tab looks empty. Say where things are before anyone starts scrolling. -->
+        <!-- The header above is tall on first load, so on a laptop the tool opens below the fold
+             and the tab looks empty. Say what is down there before anyone starts scrolling. -->
         <div
           class="max-w-4xl mx-auto mt-4 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-5 py-4 flex items-start gap-3"
         >
@@ -450,11 +450,11 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
           </svg>
           <p class="text-xs text-indigo-900/80 leading-relaxed">
-            <span class="font-bold text-indigo-900">Scroll down — everything is below this.</span>
-            <span class="font-semibold">Auto-AP</span> comes first: put in your start time, virtue eggs and target TEs,
-            and it builds the whole multi-ascension plan. Under that,
-            <span class="font-semibold">Chain Search</span> takes the chain you typed and spends hours of your CPU
-            looking for a faster one — it starts with the maths behind why that is hard, and the graphs that show it.
+            <span class="font-bold text-indigo-900">Everything is below this, so keep scrolling.</span>
+            <span class="font-semibold">Auto-AP</span> comes first: give it your start time, virtue eggs and target TEs,
+            and it builds the whole multi-ascension plan. <span class="font-semibold">Chain Search</span> sits under
+            that. It takes the chain you typed and spends hours of your CPU looking for a faster one, starting with the
+            maths for why that is hard.
           </p>
         </div>
 

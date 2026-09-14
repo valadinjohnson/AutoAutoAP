@@ -166,8 +166,8 @@ interface Bar {
   near: boolean;
 }
 
-// Each figure owns its own margins: the annotated ones need a right gutter to write into, and
-// writing a label into the plot body over the line is what makes these unreadable.
+// Each figure owns its margins. The annotated ones need a right gutter to write into, since a
+// label dropped into the plot body lands on the line and stops being readable.
 const spec = computed(() => {
   switch (props.kind) {
     case 'sawtooth':
@@ -277,7 +277,8 @@ const points = computed<Point[]>(() => {
 
   if (props.kind === 'sawtooth') {
     return s.x.map((_, i) => {
-      // A run-end is the last value before the duration rises — where every measured optimum sat.
+      // A run-end is the last value before the duration rises, which is where every measured
+      // optimum sat.
       const runEnd = i < s.y.length - 1 && s.y[i + 1] > s.y[i];
       const isBest = i === bestIdx;
       return {
@@ -321,7 +322,7 @@ const annotations = computed<Annotation[]>(() => {
 
   if (props.kind === 'sawtooth' && s) {
     // The RIGHTMOST upward step, so the bracket's leader into the right gutter stays short. The
-    // last pair is not necessarily a jump — the sweep can end mid-descent, which read as "+-1.17".
+    // last pair is not necessarily a jump: the sweep can end mid-descent, which read as "+-1.17".
     let i = -1;
     for (let k = 0; k < s.y.length - 1; k++) if (s.y[k + 1] > s.y[k]) i = k;
     if (i < 0) return [];
@@ -408,7 +409,7 @@ const annotations = computed<Annotation[]>(() => {
         stroke: '#059669',
       },
       {
-        text: `${DISTRIBUTION.within1} chains — 0.50%`,
+        text: `${DISTRIBUTION.within1} chains, 0.50%`,
         sub: 'everything within a day of optimal is left of this line',
         tx: sx(cut) + 8,
         ty: Y0.value - 34,

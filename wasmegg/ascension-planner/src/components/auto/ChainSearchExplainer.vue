@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-4">
-    <!-- 1. What the problem is, before any mention of how it is attacked. -->
+    <!-- What the problem is, before any mention of how it is attacked. -->
     <section class="rounded-xl border border-slate-200 bg-white overflow-hidden">
       <button
         type="button"
@@ -26,19 +26,19 @@
 
       <div v-show="open.how" id="cs-how" class="px-4 pb-5 pt-1 space-y-4 text-xs text-slate-600 leading-relaxed">
         <p>
-          You reach a Truth Egg target by ascending to a checkpoint, prestiging, ascending to a higher one, and so on. A
-          <span class="font-bold text-slate-800">chain</span> is that list of checkpoints —
-          <code class="font-mono-premium text-slate-800">195 219 248 286 327 490</code>. You pick the checkpoints; the
-          game does the rest. Two chains that both reach the same target can differ by
-          <span class="font-bold text-slate-800">twelve days</span> on a plan that runs about seven hundred. The whole
-          question is which chain is fastest.
+          You reach a Truth Egg target by ascending to a checkpoint, prestiging, ascending to a higher one, and so on.
+          That list of checkpoints is a chain:
+          <code class="font-mono-premium text-slate-800">195 219 248 286 327 490</code>. You pick them and the game does
+          the rest. Two chains that reach the same target can finish
+          <span class="font-bold text-slate-800">twelve days</span> apart on a plan that runs about seven hundred, which
+          is what this panel is for.
         </p>
 
         <div>
-          <p class="font-bold text-slate-800 mb-2">Why you cannot simply try them all</p>
+          <p class="font-bold text-slate-800 mb-2">Why you can't just try them all</p>
           <p class="mb-3">
             A checkpoint is a whole number of Truth Eggs, and a chain is a strictly increasing subset of them. Between a
-            current 177 and a final 490 there are 313 to choose from:
+            current 177 and a final 490 there are 313 to pick from:
           </p>
           <div class="overflow-x-auto">
             <table class="w-full text-[11px] font-mono-premium">
@@ -59,29 +59,29 @@
             </table>
           </div>
           <p class="mt-3">
-            Scoring one chain means simulating every leg of it — research purchases, hab and vehicle upgrades, twelve
-            egg switches, sale timing, all of it. That costs about
-            <span class="font-bold text-slate-800">15 seconds</span>. At 7.29 × 10<sup>16</sup> chains, trying them all
-            takes roughly <span class="font-bold text-slate-800">3.5 × 10<sup>10</sup> years</span> on one core. Twenty
-            cores does not help.
+            Scoring one chain means simulating every leg of it: research purchases, hab and vehicle upgrades, twelve egg
+            switches, sale timing. That costs about <span class="font-bold text-slate-800">15 seconds</span>. At 7.29 ×
+            10<sup>16</sup> chains it comes to roughly
+            <span class="font-bold text-slate-800">3.5 × 10<sup>10</sup> years</span> on one core, and twenty cores
+            barely dents that.
           </p>
         </div>
 
         <div>
-          <p class="font-bold text-slate-800 mb-2">And good chains are rare</p>
+          <p class="font-bold text-slate-800 mb-2">Good chains are rare</p>
           <p class="mb-3">
-            Below is every chain in one exhaustive box — all
-            {{ DISTRIBUTION.n.toLocaleString() }} chains of the form
+            The figure below covers one box priced in full: all {{ DISTRIBUTION.n.toLocaleString() }} chains of the form
             <code class="font-mono-premium text-slate-800">195 X₂ X₃ X₄ 490</code> over a fixed range of each
-            checkpoint. Because the whole box was priced, its winner is a
-            <span class="font-bold text-slate-800">proven</span> optimum of the box, not a search result.
+            checkpoint. Since nothing in it was skipped, the winner there is a
+            <span class="font-bold text-slate-800">proven</span> optimum of that box rather than something a search
+            happened to land on.
           </p>
           <ChainMathFigure kind="distribution">
-            Best to worst spans {{ (DISTRIBUTION.worst - DISTRIBUTION.best).toFixed(1) }} days, but only
+            Best to worst spans {{ (DISTRIBUTION.worst - DISTRIBUTION.best).toFixed(1) }} days. Only
             <span class="font-semibold text-slate-700">{{ DISTRIBUTION.within1 }} chains (0.50%)</span> land within a
-            day of the best, and the entire top 100 is packed into
+            day of the best, and the whole top 100 fits inside
             <span class="font-semibold text-slate-700">{{ DISTRIBUTION.top100Span }} days</span>. Picking checkpoints by
-            feel puts you in the fat middle — about a week of real time behind.
+            feel drops you somewhere in the middle of that hump, about a week behind.
           </ChainMathFigure>
         </div>
 
@@ -89,26 +89,26 @@
           <p class="font-bold text-slate-800 mb-2">Three things that do not work</p>
           <ul class="space-y-2 list-disc list-outside pl-4">
             <li>
-              <span class="font-semibold text-slate-700">Guessing a chain's duration without simulating it.</span> A
-              feature-based predictor scored Spearman ρ = −0.053 against the truth, with a median error of 15.6 days and
-              zero overlap with the true top 100. It is slightly worse than useless, because unmodelled farm state moves
-              a single leg by 1–2.6 days while the whole top 100 spans well under two.
+              Guessing a chain's duration without simulating it. A feature-based predictor scored Spearman ρ = −0.053
+              against the truth, a median error of 15.6 days, and zero overlap with the true top 100. It is
+              anti-correlated, so it is worse than having nothing. Unmodelled farm state shifts a single leg by 1 to 2.6
+              days while the whole top 100 spans under two, so the noise is larger than the signal.
             </li>
             <li>
-              <span class="font-semibold text-slate-700">Throwing away chains that start slowly.</span> A prefix that
-              arrives later can arrive with a higher delivery rate and win overall, so early-leg time is not a safe
-              basis for pruning. An implemented branch-and-bound cut 0 of 69 chains on a real run.
+              Discarding chains that start slowly. A prefix that arrives later can arrive with a higher delivery rate
+              and win overall, so early-leg time is not a safe basis for pruning. An implemented branch-and-bound cut 0
+              of 69 chains on a real run.
             </li>
             <li>
-              <span class="font-semibold text-slate-700">Assuming the landscape is well behaved.</span> It is not
-              unimodal — see the second figure below — so "keep going until it gets worse" stops early.
+              Assuming the shape is well behaved. It is not unimodal, as the second figure below shows, so "keep going
+              until it gets worse" stops you early.
             </li>
           </ul>
         </div>
       </div>
     </section>
 
-    <!-- 2. Only now: what the search actually does, and why so little coverage is enough. -->
+    <!-- Only now: what the search does, and why so little coverage is enough. -->
     <section class="rounded-xl border border-slate-200 bg-white overflow-hidden">
       <button
         type="button"
@@ -138,102 +138,98 @@
         class="px-4 pb-5 pt-1 space-y-5 text-xs text-slate-600 leading-relaxed"
       >
         <div>
-          <p class="font-bold text-slate-800 mb-2">The landscape has structure, and it is the sale calendar</p>
+          <p class="font-bold text-slate-800 mb-2">The shape comes from the sale calendar</p>
           <p class="mb-3">
-            A leg's build phase ends on a Research Sale END — Saturday 09:00 Pacific. So as you move one checkpoint a
-            single Truth Egg at a time, the duration does not change smoothly. Push it one higher and you usually still
-            make the same Saturday, so the leg gets slightly cheaper. Push it one too far and you miss that sale and
-            wait for the next one.
+            A leg's build phase ends on a Research Sale END, which falls on Saturday at 09:00 Pacific. Move one
+            checkpoint up a single Truth Egg and the duration does not change smoothly. Usually you still make the same
+            Saturday and the leg gets slightly cheaper. Go one too far and you miss that sale and wait for the next one.
           </p>
           <ChainMathFigure kind="sawtooth">
-            Every tooth is one missed sale. Across all {{ SAWTOOTH_STATS.runEndTotal }} fully swept prefixes in the box,
-            the best value sat at a <span class="font-semibold text-slate-700">run-end</span> — the last Truth Egg
-            before a jump —
+            Every tooth is one missed sale. The best value in a sweep always sat at a
+            <span class="font-semibold text-slate-700">run-end</span>, meaning the last Truth Egg before a jump:
             <span class="font-semibold text-slate-700"
               >{{ SAWTOOTH_STATS.runEndHits }} times out of {{ SAWTOOTH_STATS.runEndTotal }}</span
-            >. Jumps have a median size of {{ SAWTOOTH_STATS.jumpMedianDays }} days ({{
-              SAWTOOTH_STATS.jumpCount
-            }}
-            measured), and {{ SAWTOOTH_STATS.runLength35Pct }}% of descending runs are 3–5 Truth Eggs long.
+            >
+            fully swept prefixes in the box. Jumps have a median size of {{ SAWTOOTH_STATS.jumpMedianDays }} days across
+            {{ SAWTOOTH_STATS.jumpCount }} measured, and {{ SAWTOOTH_STATS.runLength35Pct }}% of descending runs are 3
+            to 5 Truth Eggs long.
           </ChainMathFigure>
           <p class="mt-3">
-            That last number is the entire reason this works. The function is piecewise, the pieces are a few Truth Eggs
-            wide, so a <span class="font-bold text-slate-800">±8 sweep</span> is wide enough to contain a whole run and
-            the boundary that ends it. Replaying the search across 4913 exhaustive grid points put the knee at radius 4
-            and exactness at radius 7; the code uses 8, one step of margin.
+            That run length is what makes a narrow sweep viable. The function is piecewise and the pieces are a few
+            Truth Eggs wide, so a <span class="font-bold text-slate-800">±8 sweep</span> is wide enough to hold a whole
+            run plus the boundary that ends it. Replaying the search across 4913 exhaustive grid points put the knee at
+            radius 4 and exactness at radius 7. The code uses 8, one step of margin.
           </p>
         </div>
 
         <div>
-          <p class="font-bold text-slate-800 mb-2">Zoom out, and it is not a bowl</p>
+          <p class="font-bold text-slate-800 mb-2">Zoomed out, it is not a bowl</p>
           <ChainMathFigure kind="wide">
-            The same sweep across 86 consecutive values. The left side falls in
-            <span class="font-semibold text-slate-700">ledges of 10 to 50 days</span> as whole legs reorganise, not as a
-            slope; it falls, rises, and falls again, which is what
-            <span class="font-semibold text-slate-700">not unimodal</span> means in practice and why a hill-climb that
-            stops at the first upturn strands early. The floor is a broad plain around 283–290, and parking the last
-            checkpoint near the target instead costs 37.4 days — a tiny final leg pays a full farm rebuild for almost no
-            earning time.
+            The same sweep across 86 consecutive values. The left side drops in
+            <span class="font-semibold text-slate-700">ledges of 10 to 50 days</span> as whole legs reorganise. It
+            falls, rises, and falls again, which is what
+            <span class="font-semibold text-slate-700">not unimodal</span> means here: a hill-climb that stops at the
+            first upturn strands early. The floor is a broad plain around 283 to 290. Parking the last checkpoint near
+            the target instead costs 37.4 days, because a tiny final leg pays for a full farm rebuild and then has
+            almost no time left to earn.
           </ChainMathFigure>
         </div>
 
         <div>
           <p class="font-bold text-slate-800 mb-2">What the search actually runs</p>
           <p class="mb-3">
-            Coordinate descent with exhaustive slices, over a simulator we trust. The stages are
-            <span class="font-semibold text-slate-700">strictly nested</span>, so a higher effort tier is a later stop
-            point rather than a different algorithm — stopping early leaves you exactly what the completed stages
-            guarantee.
+            Coordinate descent with exhaustive slices, scored by the same simulator the Auto Planner uses. The stages
+            are <span class="font-semibold text-slate-700">strictly nested</span>, so a higher effort tier stops later
+            in the same sequence. Whichever tier you stop at, you keep everything the completed stages guarantee.
           </p>
           <ol class="space-y-2 list-decimal list-outside pl-4">
             <li v-for="stage in STAGES" :key="stage.name">
-              <span class="font-semibold text-slate-700">{{ stage.name }}</span> — {{ stage.what }}
+              <span class="font-semibold text-slate-700">{{ stage.name }}:</span> {{ stage.what }}
             </li>
           </ol>
           <p class="mt-3">
-            On a 7-ascension chain the Thorough tier prices about 11,062 chains. That is roughly
-            <span class="font-bold text-slate-800">one chain in ten trillion</span> of the space, and it lands within
-            hours of the best answer found — not because the search is clever, but because the sale calendar already cut
-            the landscape into pieces small enough to sweep.
+            On a 7-ascension chain the Thorough tier prices about 11,062 chains, roughly
+            <span class="font-bold text-slate-800">one in ten trillion</span> of the space, and lands within hours of
+            the best answer found. It gets away with that because the sale calendar has already cut the range into
+            pieces small enough to sweep.
           </p>
         </div>
 
         <div>
           <p class="font-bold text-slate-800 mb-2">Where it goes wrong: the chain you start from</p>
           <p class="mb-3">
-            Coordinate descent cannot cross a ridge wider than its radius, and nothing in the algorithm detects that it
-            is stuck on the wrong hill. This is measurable. Below, each column is a different
-            <span class="font-semibold text-slate-700">first checkpoint</span>, and its value is the best chain that
-            exists anywhere beyond it — every one of the {{ SEED_SENSITIVITY.cells.toLocaleString() }} chains in a
-            common box was priced for each, so the columns are directly comparable.
+            Coordinate descent cannot cross a ridge wider than its radius, and nothing in the algorithm notices when it
+            is stuck on the wrong hill. The figure below measures what that costs. Each column is a different
+            <span class="font-semibold text-slate-700">first checkpoint</span>, and its height is the best chain
+            reachable from there. The same {{ SEED_SENSITIVITY.cells.toLocaleString() }}-chain box was priced under
+            every column, so they are directly comparable.
           </p>
           <ChainMathFigure kind="seed">
-            Starting at {{ seed.bestX1 }} reaches {{ seed.bestDays }} days; starting at {{ seed.worstX1 }} cannot do
-            better than {{ seed.worstDays }}, a
-            <span class="font-semibold text-slate-700">{{ seed.spread }}-day</span>
-            penalty decided before the search does anything. And the penalty is
-            <span class="font-semibold text-slate-700">jagged, not a bowl</span> — 191 is 10 days better than its
-            neighbour 192, which is 10 days worse than 194. There is no gradient to follow here.
+            Starting at {{ seed.bestX1 }} reaches {{ seed.bestDays }} days. Starting at {{ seed.worstX1 }} cannot do
+            better than {{ seed.worstDays }}, a <span class="font-semibold text-slate-700">{{ seed.spread }}-day</span>
+            penalty settled before the search runs at all. The penalty is also
+            <span class="font-semibold text-slate-700">jagged rather than bowl-shaped</span>, so there is nothing to
+            follow downhill: 191 beats its neighbour 192 by 10 days, and 192 is 10 days worse than 194.
           </ChainMathFigure>
           <p class="mt-3">
-            So a good seed and a bad seed genuinely do end in different places, and the coarse scan that picks one for
-            you is the weakest link in the whole pipeline: its own answer measured
+            Good and bad starting chains really do end up in different places, which puts a lot of weight on the coarse
+            scan that picks one for you. Its own answer measured
             <span class="font-bold text-slate-800">8.6 and 12.0 days</span> off the final result on the two accounts
-            tested. When it picks badly, every stage afterwards polishes the wrong hill beautifully. Running twice from
-            different starting chains and comparing is currently the only way to notice.
+            tested. When it picks badly, every later stage does a careful job on the wrong hill. Running twice from
+            different starting chains and comparing the answers is the only way to catch that at the moment.
           </p>
           <p class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-800">
-            <span class="font-bold">The honest summary.</span> The result is a strong local optimum, never a proven
-            global one. Accuracy figures come from three accounts, and only one has a proven optimum to check against.
-            There are no confidence percentages anywhere in this project on purpose: three observations cannot honestly
-            be turned into a probability.
+            What you get out of this is a strong local optimum. It has never been proven to be the global one, and the
+            search cannot tell you how far off it is. The accuracy figures come from three accounts, only one of which
+            has a proven optimum to check against. That is also why there are no confidence percentages anywhere in this
+            project: three observations cannot honestly be turned into a probability.
           </p>
         </div>
       </div>
     </section>
 
-    <!-- 3. The ask. Deliberately last of the three: it only makes sense once someone has read
-         why the sample size is the binding constraint. -->
+    <!-- The ask. Last of the three, so it lands after the reader knows why the sample size is the
+         thing holding everything up. -->
     <section class="rounded-xl border border-emerald-200 bg-emerald-50/60 overflow-hidden">
       <button
         type="button"
@@ -259,25 +255,24 @@
 
       <div v-show="open.help" id="cs-help" class="px-4 pb-5 pt-1 space-y-3 text-xs text-emerald-900/80 leading-relaxed">
         <p>
-          Everything above describes a search, not a formula. Nobody has worked out
-          <span class="font-bold text-emerald-900">where the best places to prestige actually are</span>, or why the
-          good checkpoints land where they do. We know the sale calendar carves the landscape into teeth and that optima
-          sit on run-ends — but not what decides which run-end wins, how the answer moves with delivery rate or artifact
-          loadout, or whether the spacing between checkpoints follows a rule at all. The same goes for shift order: the
-          twelve shifts run in a fixed sequence that was tuned by hand, and nobody has shown it is optimal.
+          Everything above is a search. There is still no formula for
+          <span class="font-bold text-emerald-900">where the best places to prestige are</span>, or why the good
+          checkpoints land where they do. We know the sale calendar cuts the range into teeth and that optima sit on
+          run-ends. We do not know what decides which run-end wins, how the answer moves as delivery rate or artifact
+          loadout changes, or whether the spacing between checkpoints follows any rule. Shift order is in the same
+          state: the twelve shifts run in a hand-tuned fixed sequence that nobody has shown to be optimal.
         </p>
         <p>
-          The reason it is still open is sample size. Three accounts is not enough to tell a rule from a coincidence,
-          and one person cannot brute-force their way past that — every extra data point costs someone hours of CPU.
+          What is holding it up is sample size. Three accounts cannot separate a rule from a coincidence, and no one
+          person can brute-force past that, since every extra data point costs somebody hours of CPU.
         </p>
         <p class="font-semibold text-emerald-900">
-          So: run a search, and when it finishes, submit the result with the button further down this panel.
+          So if you run a search, submit the result when it finishes. The button is further down this panel.
         </p>
         <p>
-          A submission is the chain, its timings and the settings that produced it — enough for someone to look for the
-          pattern across many accounts. It is opt-in, it does not include your player ID, and you can download the same
-          data as a CSV and keep it. The more accounts on the board, the sooner "run a three-hour search" becomes "here
-          is the rule".
+          A submission holds the chain, its timings and the settings that produced it, which is enough to go looking for
+          the pattern across many accounts. It is opt-in, it leaves out your player ID, and you can download the same
+          data as a CSV for yourself. More accounts on the board is the only thing that turns any of this into a rule.
         </p>
       </div>
     </section>
@@ -289,8 +284,8 @@ import { reactive } from 'vue';
 import ChainMathFigure from './charts/ChainMathFigure.vue';
 import { DISTRIBUTION, SAWTOOTH_STATS, SEED_SENSITIVITY } from '@/lib/charts/chainSearchMath';
 
-// Open by default: someone landing here has not been told any of this yet, and a collapsed
-// explanation of a three-hour operation reads as though it were optional.
+// Open by default. A collapsed form of this reads as optional, and most people who get here have
+// not seen any of it before.
 const open = reactive({ how: true, algorithm: true, help: true });
 
 // Read off the data rather than transcribed into the prose, so re-running the sweeps and pasting a
@@ -318,7 +313,7 @@ const SPACE_SIZE = [
 const STAGES = [
   {
     name: 'Coarse scan (optional)',
-    what: 'a wide grid at step 15–25, to pick a starting shape and an ascension count. Deliberately rough.',
+    what: 'a wide grid at step 15 to 25, to pick a starting shape and an ascension count. Deliberately rough.',
   },
   {
     name: 'Resolve last',
