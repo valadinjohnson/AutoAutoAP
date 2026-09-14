@@ -39,164 +39,198 @@
         </p>
       </div>
 
-      <!-- Effort -->
-      <div class="space-y-3">
-        <div class="flex items-center justify-between px-1">
-          <span class="flex items-center gap-1.5">
-            <label for="effort-range" class="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-              Effort
-            </label>
-            <HelpTip
-              >How many search stages to run. They are strictly nested, so a higher tier is a later stop point, not a
-              different algorithm — stopping one early always leaves you the lower tier's answer at no extra
-              cost.</HelpTip
-            >
-          </span>
-          <span class="text-[10px] font-black text-emerald-600 uppercase tracking-widest">{{ note.label }}</span>
-        </div>
+      <!-- The maths, then the algorithm, then the controls. Someone who has never seen this panel
+           is being asked to commit hours of their own CPU; the case for doing that has to come
+           before the knobs, not after them. -->
+      <ChainSearchExplainer />
 
-        <input
-          id="effort-range"
-          v-model.number="effortIndex"
-          type="range"
-          min="0"
-          :max="EFFORT_ORDER.length - 1"
-          step="1"
-          :disabled="store.isRunning"
-          class="w-full accent-emerald-600 disabled:opacity-50"
-        />
-        <div class="flex justify-between px-1">
-          <span
-            v-for="tier in EFFORT_ORDER"
-            :key="tier"
-            class="text-[9px] font-black uppercase tracking-widest"
-            :class="tier === store.effort ? 'text-emerald-600' : 'text-slate-300'"
+      <!-- Settings. Collapsible because a reader on their second visit wants the button, not the
+           essay — but open by default, since a collapsed form looks like there is nothing here. -->
+      <div class="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        <button
+          type="button"
+          class="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 transition-colors"
+          :aria-expanded="settingsOpen"
+          aria-controls="cs-settings"
+          @click="settingsOpen = !settingsOpen"
+        >
+          <svg
+            class="w-4 h-4 flex-shrink-0 text-slate-400 transition-transform duration-200"
+            :class="{ 'rotate-90': settingsOpen }"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
           >
-            {{ EFFORT_NOTES[tier].label }}
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+          </svg>
+          <span class="text-[11px] font-black text-slate-700 uppercase tracking-widest">Search settings</span>
+          <span class="text-[10px] font-bold text-slate-400 normal-case tracking-normal ml-auto">
+            effort, limits, and what it simulates with
           </span>
-        </div>
+        </button>
 
-        <div class="p-4 bg-white border border-slate-200 rounded-xl space-y-2">
-          <p class="text-xs text-slate-700 leading-relaxed">{{ note.adds }}</p>
-          <p class="text-[11px] text-slate-500 leading-relaxed">
-            <span class="font-black uppercase tracking-widest text-slate-400">Measured accuracy</span>
-            — {{ note.accuracy }}
-          </p>
-          <p class="text-[10px] text-slate-400 leading-relaxed">
-            Every figure above is hours behind the best answer <em>found</em>, {{ ACCURACY_SAMPLE }}. There is no
-            confidence percentage here on purpose: three observations cannot honestly be turned into one.
-          </p>
-          <p class="text-[11px] text-slate-500">
-            <span class="font-black uppercase tracking-widest text-slate-400">Reference time</span>
-            — {{ note.cliDuration }} on a 20-core desktop running the command-line version at 12 jobs. Your machine has
-            {{ store.workersInPool + 1 }} logical cores, so expect a different number; the live estimate below is
-            measured here, not carried over.
-          </p>
-          <p
-            v-if="note.warning"
-            class="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5 leading-relaxed"
-          >
-            {{ note.warning }}
-          </p>
-        </div>
-      </div>
+        <div v-show="settingsOpen" id="cs-settings" class="px-4 pb-5 pt-1 space-y-8">
+          <!-- Effort -->
+          <div class="space-y-3">
+            <div class="flex items-center justify-between px-1">
+              <span class="flex items-center gap-1.5">
+                <label for="effort-range" class="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                  Effort
+                </label>
+                <HelpTip
+                  >How many search stages to run. They are strictly nested, so a higher tier is a later stop point, not
+                  a different algorithm — stopping one early always leaves you the lower tier's answer at no extra
+                  cost.</HelpTip
+                >
+              </span>
+              <span class="text-[10px] font-black text-emerald-600 uppercase tracking-widest">{{ note.label }}</span>
+            </div>
 
-      <!-- Starting point -->
-      <label
-        class="flex items-start gap-3 p-4 bg-white border border-slate-200 rounded-xl cursor-pointer hover:border-emerald-300"
-      >
-        <input
-          v-model="store.findSeedFirst"
-          type="checkbox"
-          :disabled="store.isRunning"
-          class="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-50"
-        />
-        <span class="text-xs text-slate-600 leading-relaxed">
-          <span class="font-bold text-slate-800">Find a starting chain for me</span>
-          — scan a coarse grid of checkpoints first and pick the prestige count, instead of starting from the chain
-          above. Turn this on if you do not already have a chain you trust. It costs one extra wide batch (<span
-            class="font-semibold"
-            >372 chains, about 15 minutes on a 20-core desktop</span
-          >) and its answer is only a rough shape: measured 12.0 and 8.6 days off the final result on the two accounts
-          tested. The stages after it are what close that gap.
-        </span>
-      </label>
-
-      <!-- Limits. Both of these already governed the search; neither had a control. -->
-      <div class="p-4 rounded-xl border border-slate-200 bg-white space-y-3">
-        <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Limits</h3>
-        <div class="flex flex-wrap items-end gap-5">
-          <div>
-            <span class="flex items-center gap-1.5">
-              <label for="min-prestiges" class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                Fewest ascensions
-              </label>
-              <HelpTip
-                >Counted including your final target, so a plan reaching 490 through five checkpoints is 5. Each
-                ascension is a full rebuild.</HelpTip
-              >
-            </span>
             <input
-              id="min-prestiges"
-              v-model.number="store.minPrestiges"
-              type="number"
-              min="2"
-              :max="store.maxPrestiges"
-              :disabled="store.isRunning"
-              class="mt-1 w-20 rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
-            />
-          </div>
-          <div>
-            <label for="max-prestiges" class="block text-[9px] font-black text-slate-400 uppercase tracking-widest"
-              >Most ascensions</label
-            >
-            <input
-              id="max-prestiges"
-              v-model.number="store.maxPrestiges"
-              type="number"
-              :min="store.minPrestiges"
-              max="12"
-              :disabled="store.isRunning"
-              class="mt-1 w-20 rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
-            />
-          </div>
-          <div>
-            <span class="flex items-center gap-1.5">
-              <label for="pin-count" class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                Lock the first
-              </label>
-              <HelpTip
-                >Hold this many leading checkpoints exactly as typed. Useful once you have committed to them in game —
-                and it is the cheapest speedup here, because moving the first checkpoint forces every later leg to be
-                re-simulated.</HelpTip
-              >
-            </span>
-            <input
-              id="pin-count"
-              v-model.number="store.pin"
-              type="number"
+              id="effort-range"
+              v-model.number="effortIndex"
+              type="range"
               min="0"
-              :max="Math.max(0, store.seedChain.length - 2)"
+              :max="EFFORT_ORDER.length - 1"
+              step="1"
               :disabled="store.isRunning"
-              class="mt-1 w-20 rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
+              class="w-full accent-emerald-600 disabled:opacity-50"
             />
-          </div>
-        </div>
-        <p class="text-[11px] text-slate-500 leading-relaxed">
-          Ascension count is the chain length including your final target, and it bounds both the coarse scan and the
-          prestige-count probe.
-          <span v-if="store.pin > 0" class="font-semibold text-slate-700">
-            Locking {{ store.pin }} holds {{ store.seedChain.slice(0, store.pin).join(' ') }} fixed — the search will
-            not move {{ store.pin === 1 ? 'it' : 'them' }}.
-          </span>
-          <span v-else>
-            Locking checkpoints is worth it when you have already committed to them in game: moving the first checkpoint
-            re-simulates every leg after it, so pinning it is usually the cheapest speedup available.
-          </span>
-        </p>
-      </div>
+            <div class="flex justify-between px-1">
+              <span
+                v-for="tier in EFFORT_ORDER"
+                :key="tier"
+                class="text-[9px] font-black uppercase tracking-widest"
+                :class="tier === store.effort ? 'text-emerald-600' : 'text-slate-300'"
+              >
+                {{ EFFORT_NOTES[tier].label }}
+              </span>
+            </div>
 
-      <!-- Availability. Off by default: it changes the objective, so a plan built with it is not
+            <div class="p-4 bg-white border border-slate-200 rounded-xl space-y-2">
+              <p class="text-xs text-slate-700 leading-relaxed">{{ note.adds }}</p>
+              <p class="text-[11px] text-slate-500 leading-relaxed">
+                <span class="font-black uppercase tracking-widest text-slate-400">Measured accuracy</span>
+                — {{ note.accuracy }}
+              </p>
+              <p class="text-[10px] text-slate-400 leading-relaxed">
+                Every figure above is hours behind the best answer <em>found</em>, {{ ACCURACY_SAMPLE }}. There is no
+                confidence percentage here on purpose: three observations cannot honestly be turned into one.
+              </p>
+              <p class="text-[11px] text-slate-500">
+                <span class="font-black uppercase tracking-widest text-slate-400">Reference time</span>
+                — {{ note.cliDuration }} on a 20-core desktop running the command-line version at 12 jobs. Your machine
+                has {{ store.workersInPool + 1 }} logical cores, so expect a different number; the live estimate below
+                is measured here, not carried over.
+              </p>
+              <p
+                v-if="note.warning"
+                class="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5 leading-relaxed"
+              >
+                {{ note.warning }}
+              </p>
+            </div>
+          </div>
+
+          <!-- Starting point -->
+          <label
+            class="flex items-start gap-3 p-4 bg-white border border-slate-200 rounded-xl cursor-pointer hover:border-emerald-300"
+          >
+            <input
+              v-model="store.findSeedFirst"
+              type="checkbox"
+              :disabled="store.isRunning"
+              class="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-50"
+            />
+            <span class="text-xs text-slate-600 leading-relaxed">
+              <span class="font-bold text-slate-800">Find a starting chain for me</span>
+              — scan a coarse grid of checkpoints first and pick the prestige count, instead of starting from the chain
+              above. Turn this on if you do not already have a chain you trust. It costs one extra wide batch (<span
+                class="font-semibold"
+                >372 chains, about 15 minutes on a 20-core desktop</span
+              >) and its answer is only a rough shape: measured 12.0 and 8.6 days off the final result on the two
+              accounts tested. The stages after it are what close that gap.
+            </span>
+          </label>
+
+          <!-- Limits. Both of these already governed the search; neither had a control. -->
+          <div class="p-4 rounded-xl border border-slate-200 bg-white space-y-3">
+            <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Limits</h3>
+            <div class="flex flex-wrap items-end gap-5">
+              <div>
+                <span class="flex items-center gap-1.5">
+                  <label
+                    for="min-prestiges"
+                    class="block text-[9px] font-black text-slate-400 uppercase tracking-widest"
+                  >
+                    Fewest ascensions
+                  </label>
+                  <HelpTip
+                    >Counted including your final target, so a plan reaching 490 through five checkpoints is 5. Each
+                    ascension is a full rebuild.</HelpTip
+                  >
+                </span>
+                <input
+                  id="min-prestiges"
+                  v-model.number="store.minPrestiges"
+                  type="number"
+                  min="2"
+                  :max="store.maxPrestiges"
+                  :disabled="store.isRunning"
+                  class="mt-1 w-20 rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
+                />
+              </div>
+              <div>
+                <label for="max-prestiges" class="block text-[9px] font-black text-slate-400 uppercase tracking-widest"
+                  >Most ascensions</label
+                >
+                <input
+                  id="max-prestiges"
+                  v-model.number="store.maxPrestiges"
+                  type="number"
+                  :min="store.minPrestiges"
+                  max="12"
+                  :disabled="store.isRunning"
+                  class="mt-1 w-20 rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
+                />
+              </div>
+              <div>
+                <span class="flex items-center gap-1.5">
+                  <label for="pin-count" class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                    Lock the first
+                  </label>
+                  <HelpTip
+                    >Hold this many leading checkpoints exactly as typed. Useful once you have committed to them in game
+                    — and it is the cheapest speedup here, because moving the first checkpoint forces every later leg to
+                    be re-simulated.</HelpTip
+                  >
+                </span>
+                <input
+                  id="pin-count"
+                  v-model.number="store.pin"
+                  type="number"
+                  min="0"
+                  :max="Math.max(0, store.seedChain.length - 2)"
+                  :disabled="store.isRunning"
+                  class="mt-1 w-20 rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
+                />
+              </div>
+            </div>
+            <p class="text-[11px] text-slate-500 leading-relaxed">
+              Ascension count is the chain length including your final target, and it bounds both the coarse scan and
+              the prestige-count probe.
+              <span v-if="store.pin > 0" class="font-semibold text-slate-700">
+                Locking {{ store.pin }} holds {{ store.seedChain.slice(0, store.pin).join(' ') }} fixed — the search
+                will not move {{ store.pin === 1 ? 'it' : 'them' }}.
+              </span>
+              <span v-else>
+                Locking checkpoints is worth it when you have already committed to them in game: moving the first
+                checkpoint re-simulates every leg after it, so pinning it is usually the cheapest speedup available.
+              </span>
+            </p>
+          </div>
+
+          <!-- Availability. Off by default: it changes the objective, so a plan built with it is not
            comparable to one built without it.
 
            LOCKED WHILE RUNNING, LOUDLY. Every one of these inputs was already `:disabled` and that
@@ -205,340 +239,268 @@
            search was started with the box unticked and there was nothing on screen to say the
            setting could not simply be corrected. So the whole card turns red and says what to do
            instead. -->
-      <div
-        class="p-4 rounded-xl border space-y-3"
-        :class="store.isRunning ? 'border-rose-200 bg-rose-50/40' : 'border-slate-200 bg-white'"
-      >
-        <div v-if="store.isRunning" class="flex items-start gap-2.5 rounded-lg border border-rose-300 bg-rose-50 p-3">
-          <span class="text-rose-600 text-base leading-none mt-0.5" aria-hidden="true">&#128683;</span>
-          <p class="text-[11px] text-rose-800 leading-relaxed">
-            <span class="font-black uppercase tracking-wide">Locked during calculations.</span>
-            Your schedule changes which chain is fastest, so it cannot be edited part-way through a run — the chains
-            already priced were priced under the old setting. To change it, hit
-            <span class="font-bold">Stop and keep best</span> below, adjust, and start again.
-            <span class="font-semibold">Nothing is lost: every chain priced so far is checkpointed</span>
-            and replays instantly if the setting you change does not affect it.
-          </p>
-        </div>
-
-        <label class="flex items-start gap-3" :class="store.isRunning ? 'cursor-not-allowed' : 'cursor-pointer'">
-          <input
-            v-model="store.scheduleEnabled"
-            type="checkbox"
-            :disabled="store.isRunning"
-            class="mt-0.5 rounded focus:ring-emerald-500"
-            :class="
-              store.isRunning
-                ? 'border-rose-300 text-rose-400 opacity-60 cursor-not-allowed'
-                : 'border-slate-300 text-emerald-600'
-            "
-          />
-          <span class="text-xs text-slate-600 leading-relaxed">
-            <span class="font-bold text-slate-800">Plan around my schedule</span>
-            — say when you can actually play, and no plan will ask you to prestige outside it. Each prestige that would
-            land while you are away is moved to your next available hour and the delay is
-            <span class="font-semibold">charged</span>, which is why this has to be on before the search starts: it
-            changes which chain is fastest, not just how the answer is displayed.
-          </span>
-        </label>
-
-        <div v-if="store.scheduleEnabled" class="space-y-3 pl-8">
-          <div class="flex flex-wrap items-end gap-4">
-            <div>
-              <label for="avail-from" class="block text-[9px] font-black text-slate-400 uppercase tracking-widest"
-                >Free from</label
-              >
-              <select
-                id="avail-from"
-                v-model.number="store.availableFrom"
-                :disabled="store.isRunning"
-                class="mt-1 rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
-              >
-                <option v-for="h in 24" :key="h - 1" :value="h - 1">{{ String(h - 1).padStart(2, '0') }}:00</option>
-              </select>
+          <div
+            class="p-4 rounded-xl border space-y-3"
+            :class="store.isRunning ? 'border-rose-200 bg-rose-50/40' : 'border-slate-200 bg-white'"
+          >
+            <div
+              v-if="store.isRunning"
+              class="flex items-start gap-2.5 rounded-lg border border-rose-300 bg-rose-50 p-3"
+            >
+              <span class="text-rose-600 text-base leading-none mt-0.5" aria-hidden="true">&#128683;</span>
+              <p class="text-[11px] text-rose-800 leading-relaxed">
+                <span class="font-black uppercase tracking-wide">Locked during calculations.</span>
+                Your schedule changes which chain is fastest, so it cannot be edited part-way through a run — the chains
+                already priced were priced under the old setting. To change it, hit
+                <span class="font-bold">Stop and keep best</span> below, adjust, and start again.
+                <span class="font-semibold">Nothing is lost: every chain priced so far is checkpointed</span>
+                and replays instantly if the setting you change does not affect it.
+              </p>
             </div>
-            <div>
-              <label for="avail-to" class="block text-[9px] font-black text-slate-400 uppercase tracking-widest"
-                >Until</label
-              >
-              <select
-                id="avail-to"
-                v-model.number="store.availableTo"
-                :disabled="store.isRunning"
-                class="mt-1 rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
-              >
-                <option v-for="h in 24" :key="h - 1" :value="h - 1">{{ String(h - 1).padStart(2, '0') }}:00</option>
-              </select>
-            </div>
-          </div>
 
-          <div>
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Days</span>
-            <div class="flex flex-wrap gap-1.5">
-              <button
-                v-for="(name, i) in DAY_NAMES"
-                :key="i"
-                type="button"
+            <label class="flex items-start gap-3" :class="store.isRunning ? 'cursor-not-allowed' : 'cursor-pointer'">
+              <input
+                v-model="store.scheduleEnabled"
+                type="checkbox"
                 :disabled="store.isRunning"
-                class="px-2.5 py-1 rounded-md border text-[10px] font-black uppercase tracking-widest disabled:opacity-50"
+                class="mt-0.5 rounded focus:ring-emerald-500"
                 :class="
-                  store.availableDays.includes(i)
-                    ? 'bg-emerald-600 border-emerald-600 text-white'
-                    : 'bg-white border-slate-300 text-slate-400'
+                  store.isRunning
+                    ? 'border-rose-300 text-rose-400 opacity-60 cursor-not-allowed'
+                    : 'border-slate-300 text-emerald-600'
                 "
-                @click="toggleDay(i)"
+              />
+              <span class="text-xs text-slate-600 leading-relaxed">
+                <span class="font-bold text-slate-800">Plan around my schedule</span>
+                — say when you can actually play, and no plan will ask you to prestige outside it. Each prestige that
+                would land while you are away is moved to your next available hour and the delay is
+                <span class="font-semibold">charged</span>, which is why this has to be on before the search starts: it
+                changes which chain is fastest, not just how the answer is displayed.
+              </span>
+            </label>
+
+            <div v-if="store.scheduleEnabled" class="space-y-3 pl-8">
+              <div class="flex flex-wrap items-end gap-4">
+                <div>
+                  <label for="avail-from" class="block text-[9px] font-black text-slate-400 uppercase tracking-widest"
+                    >Free from</label
+                  >
+                  <select
+                    id="avail-from"
+                    v-model.number="store.availableFrom"
+                    :disabled="store.isRunning"
+                    class="mt-1 rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
+                  >
+                    <option v-for="h in 24" :key="h - 1" :value="h - 1">{{ String(h - 1).padStart(2, '0') }}:00</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="avail-to" class="block text-[9px] font-black text-slate-400 uppercase tracking-widest"
+                    >Until</label
+                  >
+                  <select
+                    id="avail-to"
+                    v-model.number="store.availableTo"
+                    :disabled="store.isRunning"
+                    class="mt-1 rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
+                  >
+                    <option v-for="h in 24" :key="h - 1" :value="h - 1">{{ String(h - 1).padStart(2, '0') }}:00</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Days</span>
+                <div class="flex flex-wrap gap-1.5">
+                  <button
+                    v-for="(name, i) in DAY_NAMES"
+                    :key="i"
+                    type="button"
+                    :disabled="store.isRunning"
+                    class="px-2.5 py-1 rounded-md border text-[10px] font-black uppercase tracking-widest disabled:opacity-50"
+                    :class="
+                      store.availableDays.includes(i)
+                        ? 'bg-emerald-600 border-emerald-600 text-white'
+                        : 'bg-white border-slate-300 text-slate-400'
+                    "
+                    @click="toggleDay(i)"
+                  >
+                    {{ name }}
+                  </button>
+                </div>
+              </div>
+
+              <p class="text-[11px] text-slate-500 leading-relaxed">
+                <span class="font-semibold text-slate-700">{{ store.availabilityLabel }}</span
+                >. Timezone comes from the Auto Planner's scheduling inputs.
+                <span v-if="store.scheduleIsEmpty" class="text-amber-700 font-semibold"
+                  >Every day, all hours — that rules nothing out, so the search will run unconstrained.</span
+                >
+                <span v-else-if="!store.availableDays.length" class="text-amber-700 font-semibold"
+                  >No days selected. Pick at least one or nothing can be scheduled.</span
+                >
+              </p>
+
+              <label class="flex items-start gap-3 cursor-pointer">
+                <input
+                  v-model="store.deferShifts"
+                  type="checkbox"
+                  :disabled="store.isRunning"
+                  class="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-50"
+                />
+                <span class="text-[11px] text-slate-600 leading-relaxed">
+                  <span class="font-bold text-slate-800">Hold the shifts for my hours too</span>
+                  — not just the prestige. Each of the twelve switches inside an ascension waits for your next available
+                  hour and the delay is charged, so the search looks for a chain whose shifts genuinely land when you
+                  are around. Turning this off makes shifts
+                  <span class="font-semibold">reported but free</span>, which is what the numbers below mean when it is
+                  unticked.
+                </span>
+              </label>
+
+              <p
+                v-if="store.deferShifts"
+                class="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-3 leading-relaxed"
               >
-                {{ name }}
-              </button>
-            </div>
-          </div>
+                <span class="font-bold uppercase tracking-wide text-slate-500">How exact this is.</span>
+                Shifts are pushed on top of the simulated timeline rather than re-simulated, because the simulator
+                schedules them itself and teaching it about your hours would change the manual planner too. It errs one
+                way only: while you wait, the farm keeps laying the egg you have not switched away from, and that extra
+                progress is not credited — so a plan built this way should, if anything, run slightly faster than it
+                says.
+              </p>
 
-          <p class="text-[11px] text-slate-500 leading-relaxed">
-            <span class="font-semibold text-slate-700">{{ store.availabilityLabel }}</span
-            >. Timezone comes from the Auto Planner's scheduling inputs.
-            <span v-if="store.scheduleIsEmpty" class="text-amber-700 font-semibold"
-              >Every day, all hours — that rules nothing out, so the search will run unconstrained.</span
-            >
-            <span v-else-if="!store.availableDays.length" class="text-amber-700 font-semibold"
-              >No days selected. Pick at least one or nothing can be scheduled.</span
-            >
-          </p>
-
-          <label class="flex items-start gap-3 cursor-pointer">
-            <input
-              v-model="store.deferShifts"
-              type="checkbox"
-              :disabled="store.isRunning"
-              class="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-50"
-            />
-            <span class="text-[11px] text-slate-600 leading-relaxed">
-              <span class="font-bold text-slate-800">Hold the shifts for my hours too</span>
-              — not just the prestige. Each of the twelve switches inside an ascension waits for your next available
-              hour and the delay is charged, so the search looks for a chain whose shifts genuinely land when you are
-              around. Turning this off makes shifts
-              <span class="font-semibold">reported but free</span>, which is what the numbers below mean when it is
-              unticked.
-            </span>
-          </label>
-
-          <p
-            v-if="store.deferShifts"
-            class="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-3 leading-relaxed"
-          >
-            <span class="font-bold uppercase tracking-wide text-slate-500">How exact this is.</span>
-            Shifts are pushed on top of the simulated timeline rather than re-simulated, because the simulator schedules
-            them itself and teaching it about your hours would change the manual planner too. It errs one way only:
-            while you wait, the farm keeps laying the egg you have not switched away from, and that extra progress is
-            not credited — so a plan built this way should, if anything, run slightly faster than it says.
-          </p>
-
-          <p
-            v-else
-            class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed"
-          >
-            <span class="font-bold uppercase tracking-wide">What this does not fix.</span>
-            Only the prestige between two ascensions is moved. The twelve shifts inside an ascension are scheduled by
-            the simulator's own timing and are not moved, so some will still fall outside your hours — open a leg below
-            to see exactly which, or tick the box above to have them held too. The prestige delay is charged in full
-            while the extra TE you keep earning while away is not credited, so a plan built this way should, if
-            anything, run slightly faster than it says. Every accuracy figure above was measured with this off.
-          </p>
-        </div>
-      </div>
-
-      <!-- Dated milestones. A HARD filter, not an annotation - see search/milestones.ts. -->
-      <div class="p-4 rounded-xl border border-slate-200 bg-white space-y-3">
-        <div class="flex items-center justify-between gap-3">
-          <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Dates you need to hit</h3>
-          <button
-            type="button"
-            :disabled="store.isRunning"
-            class="text-[10px] font-black uppercase tracking-widest text-emerald-700 hover:text-emerald-600 disabled:opacity-40"
-            @click="addMilestone"
-          >
-            + Add
-          </button>
-        </div>
-
-        <p v-if="!store.milestones.length" class="text-[11px] text-slate-500 leading-relaxed">
-          Optional. Add one to say "be at 248 TE by the first of June" and the search will only consider chains that
-          manage it. Stated as a <span class="font-semibold">TE value</span>, not an ascension number, because the
-          prestige-count probe adds and removes checkpoints — "A3" would quietly mean a different thing halfway through
-          the run.
-        </p>
-
-        <div v-for="(m, i) in store.milestones" :key="i" class="flex flex-wrap items-end gap-3">
-          <div>
-            <label :for="`ms-te-${i}`" class="block text-[9px] font-black text-slate-400 uppercase tracking-widest"
-              >Reach TE</label
-            >
-            <input
-              :id="`ms-te-${i}`"
-              v-model.number="m.te"
-              type="number"
-              min="1"
-              :max="store.finalTE"
-              :disabled="store.isRunning"
-              class="mt-1 w-24 rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
-            />
-          </div>
-          <div>
-            <label :for="`ms-by-${i}`" class="block text-[9px] font-black text-slate-400 uppercase tracking-widest"
-              >By</label
-            >
-            <input
-              :id="`ms-by-${i}`"
-              :value="dateOf(m.by)"
-              type="date"
-              :disabled="store.isRunning"
-              class="mt-1 rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
-              @input="m.by = parseDate(($event.target as HTMLInputElement).value)"
-            />
-          </div>
-          <button
-            type="button"
-            :disabled="store.isRunning"
-            class="px-2.5 py-1.5 rounded-md border border-slate-300 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:border-red-300 hover:text-red-600 disabled:opacity-40"
-            @click="store.milestones.splice(i, 1)"
-          >
-            Remove
-          </button>
-        </div>
-
-        <p
-          v-if="store.droppedMilestones.length"
-          class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed"
-        >
-          Ignored as unsatisfiable: a milestone needs a TE between 1 and your final target ({{ store.finalTE }}) and a
-          real date. The search will run without {{ store.droppedMilestones.length === 1 ? 'it' : 'them' }}.
-        </p>
-
-        <p
-          v-if="store.activeMilestones.some(m => m.te >= store.finalTE)"
-          class="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3 leading-relaxed"
-        >
-          A milestone on the final target cannot improve the answer. The search already minimises total time, so the
-          fastest chain is by construction the one most likely to meet it — if the optimum misses your date, nothing
-          else makes it either, and all this can do is turn "here is the earliest you can finish" into "no chain found".
-          Intermediate milestones are the ones that change which chain wins.
-        </p>
-      </div>
-
-      <!-- What the simulator is wearing.
-           This was only ever in the CSV header, which meant you had to finish a run and open a
-           spreadsheet to find out what the two-year plan assumed you owned. It is a property of
-           the RUN, not of a candidate, so it belongs beside the settings that produced it - and
-           the "held fixed" caveat below is the honest limit of the whole model. -->
-      <div class="p-4 rounded-xl border border-slate-200 bg-white space-y-3">
-        <button
-          type="button"
-          class="w-full flex items-center justify-between gap-3 text-left"
-          :aria-expanded="inventoryOpen"
-          @click="toggleInventory"
-        >
-          <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-            Artifacts it is simulating with
-          </h3>
-          <span class="text-[10px] font-black uppercase tracking-widest text-slate-400">
-            {{ inventoryOpen ? '&#8964; Hide' : '&#8250; Show' }}
-          </span>
-        </button>
-
-        <div v-if="inventoryOpen && inventory" class="space-y-4">
-          <p class="text-[11px] text-slate-500 leading-relaxed">
-            The simulator does not wear a fixed set, and it does not wear what you have equipped. It re-solves the best
-            loadout inside <span class="font-semibold">every leg</span> out of your virtue inventory, and swaps between
-            these two: the <span class="font-semibold">delivery</span> set while it is building the farm, and the
-            <span class="font-semibold">earnings</span> set when it cashes out.
-          </p>
-
-          <div class="flex gap-1 bg-slate-200/50 p-1 rounded-xl w-fit">
-            <button
-              v-for="tab in ['elr', 'earnings'] as const"
-              :key="tab"
-              type="button"
-              class="px-4 py-1 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all"
-              :class="setTab === tab ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'"
-              @click="setTab = tab"
-            >
-              {{ tab === 'elr' ? 'Delivery' : 'Earnings' }}
-            </button>
-          </div>
-
-          <LoadoutDisplay :loadout="setTab === 'elr' ? inventory.elr : inventory.earnings" />
-
-          <p v-if="setTab === 'elr'" class="text-[11px] text-slate-500 leading-relaxed">
-            Solved against your research levels <span class="font-semibold">as they are today</span>, so this is the set
-            the first leg runs with. Every later leg re-solves against its own research state and will pick something
-            different — there is no single delivery set for the whole plan.
-          </p>
-          <p v-else class="text-[11px] text-slate-500 leading-relaxed">
-            The best earnings set your inventory can build. Unlike the delivery set this does not depend on research, so
-            it is the same in every leg.
-          </p>
-
-          <!-- The inventory itself, behind a second click.
-               It was open by default in the first version and that was a mistake: ten thousand
-               artifacts as text chips, most of them T1 commons the solver would never look at
-               twice, buried the two sets that actually answer the question. -->
-          <div class="border-t border-slate-100 pt-3">
-            <button
-              type="button"
-              class="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-emerald-700"
-              :aria-expanded="rawInventoryOpen"
-              @click="rawInventoryOpen = !rawInventoryOpen"
-            >
-              {{ rawInventoryOpen ? '&#8964;' : '&#8250;' }} Everything it had to choose from ({{
-                totalArtifacts.toLocaleString()
-              }}
-              artifacts, {{ totalStones.toLocaleString() }} stones)
-            </button>
-
-            <div v-if="rawInventoryOpen" class="mt-3 space-y-3">
-              <div v-if="inventory.artifacts.length" class="flex flex-wrap gap-1.5">
-                <span
-                  v-for="a in inventory.artifacts"
-                  :key="a.label"
-                  class="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[10px] font-bold text-slate-700"
-                >
-                  <span v-if="a.count > 1" class="text-slate-400">{{ a.count }}&#215; </span>{{ a.label }}
-                </span>
-              </div>
-              <div v-if="inventory.stones.length" class="flex flex-wrap gap-1.5">
-                <span
-                  v-for="st in inventory.stones"
-                  :key="st.label"
-                  class="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-[10px] font-bold text-indigo-800"
-                >
-                  <span v-if="st.count > 1" class="text-indigo-400">{{ st.count }}&#215; </span>{{ st.label }}
-                </span>
-              </div>
-              <p class="text-[11px] text-slate-400 leading-relaxed">
-                Most of these never get worn. They are listed because the solver's job is to pick out of the whole pile,
-                so the pile is the input — but only the two sets above are what any leg actually runs with.
+              <p
+                v-else
+                class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed"
+              >
+                <span class="font-bold uppercase tracking-wide">What this does not fix.</span>
+                Only the prestige between two ascensions is moved. The twelve shifts inside an ascension are scheduled
+                by the simulator's own timing and are not moved, so some will still fall outside your hours — open a leg
+                below to see exactly which, or tick the box above to have them held too. The prestige delay is charged
+                in full while the extra TE you keep earning while away is not credited, so a plan built this way should,
+                if anything, run slightly faster than it says. Every accuracy figure above was measured with this off.
               </p>
             </div>
           </div>
 
-          <p
-            v-if="!inventory.artifacts.length && !inventory.stones.length"
-            class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed"
-          >
-            No virtue artifacts found in this backup. Every leg is being simulated bare, which will make the plan look
-            considerably slower than it will actually be.
-          </p>
+          <!-- What the simulator is wearing.
+           This was only ever in the CSV header, which meant you had to finish a run and open a
+           spreadsheet to find out what the two-year plan assumed you owned. It is a property of
+           the RUN, not of a candidate, so it belongs beside the settings that produced it - and
+           the "held fixed" caveat below is the honest limit of the whole model. -->
+          <div class="p-4 rounded-xl border border-slate-200 bg-white space-y-3">
+            <button
+              type="button"
+              class="w-full flex items-center justify-between gap-3 text-left"
+              :aria-expanded="inventoryOpen"
+              @click="toggleInventory"
+            >
+              <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                Artifacts it is simulating with
+              </h3>
+              <span class="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                {{ inventoryOpen ? '&#8964; Hide' : '&#8250; Show' }}
+              </span>
+            </button>
 
-          <p class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed">
-            <span class="font-black uppercase tracking-wide">Held fixed for the whole plan.</span>
-            This is what you own <span class="font-semibold">today</span>, and the search assumes it never changes
-            across all
-            <span class="font-semibold">{{ store.bestDays > 0 ? Math.round(store.bestDays) : '700+' }}</span>
-            days. In practice you will craft and upgrade along the way, so the real run should come in
-            <span class="font-semibold">faster</span> than every number here — the model errs in the safe direction, but
-            it errs. Comparisons BETWEEN chains stay fair, because every candidate is simulated with the same inventory;
-            it is the absolute dates that will drift early. Re-run the search with a fresh backup after any significant
-            crafting.
-          </p>
+            <div v-if="inventoryOpen && inventory" class="space-y-4">
+              <p class="text-[11px] text-slate-500 leading-relaxed">
+                The simulator does not wear a fixed set, and it does not wear what you have equipped. It re-solves the
+                best loadout inside <span class="font-semibold">every leg</span> out of your virtue inventory, and swaps
+                between these two: the <span class="font-semibold">delivery</span> set while it is building the farm,
+                and the <span class="font-semibold">earnings</span> set when it cashes out.
+              </p>
+
+              <div class="flex gap-1 bg-slate-200/50 p-1 rounded-xl w-fit">
+                <button
+                  v-for="tab in ['elr', 'earnings'] as const"
+                  :key="tab"
+                  type="button"
+                  class="px-4 py-1 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all"
+                  :class="setTab === tab ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'"
+                  @click="setTab = tab"
+                >
+                  {{ tab === 'elr' ? 'Delivery' : 'Earnings' }}
+                </button>
+              </div>
+
+              <LoadoutDisplay :loadout="setTab === 'elr' ? inventory.elr : inventory.earnings" />
+
+              <p v-if="setTab === 'elr'" class="text-[11px] text-slate-500 leading-relaxed">
+                Solved against your research levels <span class="font-semibold">as they are today</span>, so this is the
+                set the first leg runs with. Every later leg re-solves against its own research state and will pick
+                something different — there is no single delivery set for the whole plan.
+              </p>
+              <p v-else class="text-[11px] text-slate-500 leading-relaxed">
+                The best earnings set your inventory can build. Unlike the delivery set this does not depend on
+                research, so it is the same in every leg.
+              </p>
+
+              <!-- The inventory itself, behind a second click.
+               It was open by default in the first version and that was a mistake: ten thousand
+               artifacts as text chips, most of them T1 commons the solver would never look at
+               twice, buried the two sets that actually answer the question. -->
+              <div class="border-t border-slate-100 pt-3">
+                <button
+                  type="button"
+                  class="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-emerald-700"
+                  :aria-expanded="rawInventoryOpen"
+                  @click="rawInventoryOpen = !rawInventoryOpen"
+                >
+                  {{ rawInventoryOpen ? '&#8964;' : '&#8250;' }} Everything it had to choose from ({{
+                    totalArtifacts.toLocaleString()
+                  }}
+                  artifacts, {{ totalStones.toLocaleString() }} stones)
+                </button>
+
+                <div v-if="rawInventoryOpen" class="mt-3 space-y-3">
+                  <div v-if="inventory.artifacts.length" class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="a in inventory.artifacts"
+                      :key="a.label"
+                      class="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[10px] font-bold text-slate-700"
+                    >
+                      <span v-if="a.count > 1" class="text-slate-400">{{ a.count }}&#215; </span>{{ a.label }}
+                    </span>
+                  </div>
+                  <div v-if="inventory.stones.length" class="flex flex-wrap gap-1.5">
+                    <span
+                      v-for="st in inventory.stones"
+                      :key="st.label"
+                      class="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-[10px] font-bold text-indigo-800"
+                    >
+                      <span v-if="st.count > 1" class="text-indigo-400">{{ st.count }}&#215; </span>{{ st.label }}
+                    </span>
+                  </div>
+                  <p class="text-[11px] text-slate-400 leading-relaxed">
+                    Most of these never get worn. They are listed because the solver's job is to pick out of the whole
+                    pile, so the pile is the input — but only the two sets above are what any leg actually runs with.
+                  </p>
+                </div>
+              </div>
+
+              <p
+                v-if="!inventory.artifacts.length && !inventory.stones.length"
+                class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed"
+              >
+                No virtue artifacts found in this backup. Every leg is being simulated bare, which will make the plan
+                look considerably slower than it will actually be.
+              </p>
+
+              <p class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed">
+                <span class="font-black uppercase tracking-wide">Held fixed for the whole plan.</span>
+                This is what you own <span class="font-semibold">today</span>, and the search assumes it never changes
+                across all
+                <span class="font-semibold">{{ store.bestDays > 0 ? Math.round(store.bestDays) : '700+' }}</span>
+                days. In practice you will craft and upgrade along the way, so the real run should come in
+                <span class="font-semibold">faster</span> than every number here — the model errs in the safe direction,
+                but it errs. Comparisons BETWEEN chains stay fair, because every candidate is simulated with the same
+                inventory; it is the absolute dates that will drift early. Re-run the search with a fresh backup after
+                any significant crafting.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1143,19 +1105,6 @@
       </div>
 
       <div
-        v-if="store.noFeasibleChain"
-        class="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 leading-relaxed space-y-1.5"
-      >
-        <p class="font-bold uppercase tracking-wide text-amber-700">No chain met your dates</p>
-        <p>
-          Every candidate was rejected by
-          {{ store.activeMilestones.length === 1 ? 'your milestone' : 'one of your milestones' }}, so there is nothing
-          to report — not even a slow answer, because a rejected chain is never priced. Remove or push back the tightest
-          date and run again to see how close the fastest plan actually gets.
-        </p>
-      </div>
-
-      <div
         v-if="store.error"
         class="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 leading-relaxed"
       >
@@ -1308,9 +1257,9 @@
           <span class="font-semibold">available hours</span>. The inventory is included because a duration means nothing
           without knowing what it was simulated with — the same plan on commons is a different claim.
           <span v-if="includeCsv"
-            >The <span class="font-semibold">CSV goes too</span>, ticked by default above: the same run in full —
-            every chain it priced, one row per leg, with start and end times in your plan's timezone. Untick it to
-            send the headline alone.</span
+            >The <span class="font-semibold">CSV goes too</span>, ticked by default above: the same run in full — every
+            chain it priced, one row per leg, with start and end times in your plan's timezone. Untick it to send the
+            headline alone.</span
           >
           If that trade is not worth it to you, do not send it.
         </p>
@@ -1326,9 +1275,9 @@
             class="font-bold text-indigo-700 underline hover:text-indigo-900"
             >chain leaderboard</a
           >
-          — fastest chain per person, and every row opens to show the artifacts, stones and per-leg
-          timings it was simulated with. Read it as "what shapes are winning for people": a duration
-          depends on the account as much as on the chain.
+          — fastest chain per person, and every row opens to show the artifacts, stones and per-leg timings it was
+          simulated with. Read it as "what shapes are winning for people": a duration depends on the account as much as
+          on the chain.
         </p>
 
         <p v-if="!store.submitUrl" class="text-[11px] text-indigo-900/70 leading-relaxed">
@@ -1389,8 +1338,8 @@ import { useChainSearchStore } from '@/stores/chainSearch';
 import { useAutoPlannerStore } from '@/stores/autoPlanner';
 import { ACCURACY_SAMPLE, EFFORT_NOTES, EFFORT_ORDER, NEAR_OPTIMAL_SHARE } from '@/search/effort';
 import { formatDuration } from '@/lib/format';
-import { getLocalTimestampInTimezone } from '@/lib/events';
 import { isAvailable } from '@/search/availability';
+import ChainSearchExplainer from './ChainSearchExplainer.vue';
 import HelpTip from './HelpTip.vue';
 import LoadoutDisplay from './LoadoutDisplay.vue';
 import type { EffortTier, LegSummary } from '@/search/types';
@@ -1400,6 +1349,9 @@ import { VIEWS } from '@/search/views';
 const props = defineProps<{ playerId: string }>();
 
 const store = useChainSearchStore();
+
+/** Open by default: a collapsed form on first load looks like the panel has nothing in it. */
+const settingsOpen = ref(true);
 const autoPlannerStore = useAutoPlannerStore();
 
 // The slider is an index, not a tier name — `<input type="range">` only speaks numbers.
@@ -1555,28 +1507,6 @@ const REASON_TEXT: Record<string, string> = {
   'prestige-count': 'best at this prestige count',
   'different-shape': 'a genuinely different shape',
 };
-
-/** `<input type="date">` speaks YYYY-MM-DD; milestones hold unix seconds. Both conversions go
- *  through the plan's own timezone so a date typed here means the same day the planner shows. */
-function dateOf(unixSeconds: number): string {
-  if (!unixSeconds) return '';
-  const tz = autoPlannerStore.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
-    .format(new Date(unixSeconds * 1000))
-    .replace(/\//g, '-');
-}
-
-function parseDate(value: string): number {
-  if (!value) return 0;
-  const tz = autoPlannerStore.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-  // End of the chosen day: "by the first of June" means any time on the first, not 00:00 sharp.
-  return getLocalTimestampInTimezone(value, '23:59', tz);
-}
-
-function addMilestone(): void {
-  const soon = Math.floor(Date.now() / 1000) + 180 * 86400;
-  store.milestones.push({ te: Math.min(store.finalTE, store.currentTE + 50), by: parseDate(dateOf(soon)) });
-}
 
 /** Whatever the page is served from, so the sleeping-tabs instruction names the right site. */
 const host = typeof window !== 'undefined' ? window.location.host : 'this site';
