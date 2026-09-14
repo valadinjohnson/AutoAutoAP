@@ -31,6 +31,9 @@ import type { EquippedArtifact } from '@/lib/artifacts/types';
 import type { CacheEntry } from './driver';
 import { describeAvailability, type Availability } from './availability';
 import type { LegSummary } from './types';
+// Runtime import in this direction only: submission.ts takes `InventoryCount` from here as a
+// type-only import, which is erased, so there is no cycle at runtime.
+import { bestPerFamily, keepVirtueArtifacts, keepVirtueStones } from './submission';
 
 export interface CsvMeta {
   planStart: number;
@@ -92,6 +95,39 @@ export function describeLoadout(loadout: EquippedArtifact[] | null | undefined):
   return items.length ? items.join(' + ') : 'none';
 }
 
+/** One slot of a solved loadout, as words. */
+export interface LoadoutSlot {
+  /** `T4L Interstellar compass`. Carries tier and rarity already. */
+  artifact: string;
+  /** The stones socketed into it, in slot order, repeats included. */
+  stones: string[];
+}
+
+/**
+ * A solved loadout broken out per slot, rather than flattened into one line.
+ *
+ * `describeLoadout` joins everything with `+` for a spreadsheet cell, which loses which stones
+ * are in which artifact -- and that is the whole story of a virtue delivery set. The fourth slot
+ * is chosen as a STONE HOLDER, so a T3 legendary ankh beats a T4 epic chalice: more sockets
+ * matters more than the better base effect. Flattened, that set looks like a mistake.
+ */
+export function describeLoadoutSlots(loadout: EquippedArtifact[] | null | undefined): LoadoutSlot[] {
+  if (!loadout?.length) return [];
+  const slots: LoadoutSlot[] = [];
+  for (const slot of loadout) {
+    const a = getArtifact(slot.artifactId);
+    if (!a) continue;
+    const stones: string[] = [];
+    for (const id of slot.stones) {
+      if (!id) continue;
+      const st = getStone(id);
+      if (st) stones.push(st.label);
+    }
+    slots.push({ artifact: a.label, stones });
+  }
+  return slots;
+}
+
 /**
  * Everything in the VIRTUE artifact inventory, counted by tier and rarity.
  *
@@ -111,26 +147,75 @@ export interface InventoryCount {
    *  parsing the human label back apart — `submission.ts` keeps only the families a virtue
    *  ascension can actually equip. Absent only for an item whose family could not be resolved. */
   familyId?: string;
+  /** Tier (1-4) and rarity (0 common .. 3 legendary), carried for the same reason as `familyId`:
+   *  so "the best one they own" can be decided on the real numbers rather than by parsing "T4L"
+   *  back out of the label. Absent when the source data did not resolve. */
+  tier?: number;
+  rarity?: number;
 }
 
 /** The virtue inventory split into artifacts and stones, counted, sorted by label. The UI renders
  *  this as two lists; `describeVirtueInventory` flattens the same data into one CSV cell. */
+interface Meta {
+  count: number;
+  familyId?: string;
+  tier?: number;
+  rarity?: number;
+}
+
 export function virtueInventory(rawBackup: unknown): { artifacts: InventoryCount[]; stones: InventoryCount[] } {
   const db = (rawBackup as { artifactsDb?: { virtueAfxDb?: { inventoryItems?: unknown[] } } })?.artifactsDb
     ?.virtueAfxDb;
   const items = db?.inventoryItems;
-  const artifacts = new Map<string, { count: number; familyId?: string }>();
-  const stones = new Map<string, { count: number; familyId?: string }>();
+  const artifacts = new Map<string, Meta>();
+  const stones = new Map<string, Meta>();
   if (!Array.isArray(items) || !items.length) return { artifacts: [], stones: [] };
-  const bump = (m: Map<string, { count: number; familyId?: string }>, label: string, n: number, familyId?: string) => {
+  const bump = (
+    m: Map<string, Meta>,
+    label: string,
+    n: number,
+    familyId?: string,
+    tier?: number,
+    rarity?: number
+  ) => {
     const cur = m.get(label);
     if (cur) cur.count += n;
-    else m.set(label, { count: n, familyId });
+    else m.set(label, { count: n, familyId, tier, rarity });
   };
+  /** Resolve one spec to its game-data tier, or null when the data does not know it. */
+  const resolve = (spec: { name?: number; level?: number } | undefined) =>
+    spec
+      ? allPossibleTiers.find(
+          (t: { afx_id: number; afx_level: number; family: { id: string }; tier_number: number }) =>
+            t.afx_id === spec.name && t.afx_level === spec.level
+        ) ?? null
+      : null;
+
   for (const raw of items) {
-    const item = raw as { quantity?: number; artifact?: { spec?: { name?: number; level?: number; rarity?: number } } };
+    const item = raw as {
+      quantity?: number;
+      artifact?: {
+        spec?: { name?: number; level?: number; rarity?: number };
+        /** Stones already socketed INTO this artifact. They are not separate inventory entries,
+         *  so a pass that only reads `artifact.spec` cannot see them -- which is exactly how the
+         *  inventory line came to report no T4 Tachyon or T4 Lunar stones at all on an account
+         *  whose own loadouts used five and eight of them. `lib/artifacts/virtue.ts` has always
+         *  flattened these back out; this did not. */
+        stones?: { name?: number; level?: number }[];
+      };
+    };
     const spec = item?.artifact?.spec;
     if (!spec) continue;
+
+    // A socketed stone is still a stone the player owns. Counted once per artifact held, since
+    // `quantity` covers identical artifacts and each carries its own copy of the socket.
+    const held = typeof item.quantity === 'number' && item.quantity > 0 ? item.quantity : 1;
+    for (const socket of item.artifact?.stones ?? []) {
+      const st = resolve(socket);
+      if (!st) continue;
+      const stone = getStone(`${st.family.id}-${st.tier_number}`);
+      if (stone) bump(stones, stone.label, held, stone.familyId, st.tier_number, 0);
+    }
     const tier = allPossibleTiers.find(
       (t: { afx_id: number; afx_level: number; family: { id: string }; tier_number: number }) =>
         t.afx_id === spec.name && t.afx_level === spec.level
@@ -140,26 +225,46 @@ export function virtueInventory(rawBackup: unknown): { artifacts: InventoryCount
     const n = typeof item.quantity === 'number' && item.quantity > 0 ? item.quantity : 1;
     const stone = getStone(`${tier.family.id}-${tier.tier_number}`);
     if (stone) {
-      bump(stones, stone.label, n, stone.familyId);
+      bump(stones, stone.label, n, stone.familyId, tier.tier_number, 0);
       continue;
     }
     const art = getArtifact(`${tier.family.id}-${tier.tier_number}-${spec.rarity ?? 0}`);
-    if (art) bump(artifacts, art.label, n, art.familyId);
+    if (art) bump(artifacts, art.label, n, art.familyId, tier.tier_number, spec.rarity ?? 0);
   }
 
-  const list = (m: Map<string, { count: number; familyId?: string }>): InventoryCount[] =>
+  const list = (m: Map<string, Meta>): InventoryCount[] =>
     [...m.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([label, v]) => ({ label, count: v.count, ...(v.familyId ? { familyId: v.familyId } : {}) }));
+      .map(([label, v]) => ({
+        label,
+        count: v.count,
+        ...(v.familyId ? { familyId: v.familyId } : {}),
+        ...(v.tier !== undefined ? { tier: v.tier } : {}),
+        ...(v.rarity !== undefined ? { rarity: v.rarity } : {}),
+      }));
   return { artifacts: list(artifacts), stones: list(stones) };
 }
 
+/**
+ * The inventory line in the CSV header, narrowed to what the simulator could actually wear.
+ *
+ * FILTERED, which it was not before. `virtueInventory` returns the whole virtue-slot inventory,
+ * and that includes families a virtue ascension cannot equip at all -- Aurelian brooches, Books
+ * of Basan, Vials of Martian dust. On a real account that was ninety-odd entries and 2,800
+ * characters of header describing a hoard, when eight lines describe the loadout. It also meant
+ * the CSV carried a sharper inventory fingerprint than the JSON submission did, while the consent
+ * text the player agreed to was written about the JSON.
+ *
+ * Same shape as the submission, deliberately: best piece per family by name for artifacts, counts
+ * kept for stones. See `bestPerFamily` in submission.ts for why those differ.
+ */
 export function describeVirtueInventory(rawBackup: unknown): string {
   const { artifacts, stones } = virtueInventory(rawBackup);
-  const fmt = (xs: InventoryCount[]) => xs.map(x => `${x.count}x ${x.label}`).join(', ');
   const parts: string[] = [];
-  if (artifacts.length) parts.push(fmt(artifacts));
-  if (stones.length) parts.push(`stones: ${fmt(stones)}`);
+  const best = bestPerFamily(keepVirtueArtifacts(artifacts));
+  if (best.length) parts.push(best.map(x => x.label).join(', '));
+  const keptStones = keepVirtueStones(stones);
+  if (keptStones.length) parts.push(`stones: ${keptStones.map(x => `${x.count}x ${x.label}`).join(', ')}`);
   return parts.length ? parts.join('; ') : 'empty';
 }
 

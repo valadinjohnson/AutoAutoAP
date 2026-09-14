@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ascension-planner",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "ascension-planner", "dev", "--port", "5199", "--strictPort"],
+      "port": 5199,
+      "url": "http://localhost:5199"
+    }
+  ]
+}

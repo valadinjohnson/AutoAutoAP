@@ -2,13 +2,13 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 
 export const useUIStore = defineStore('ui', () => {
-  const plannerTab = ref<'manual' | 'automatic'>('manual');
+  const plannerTab = ref<'manual' | 'automatic' | 'leaderboard'>('manual');
   const isHeaderCollapsed = ref(false);
   const isFooterCollapsed = ref(false);
   const loading = ref(false);
   const error = ref('');
 
-  function setActiveTab(tab: 'manual' | 'automatic') {
+  function setActiveTab(tab: 'manual' | 'automatic' | 'leaderboard') {
     plannerTab.value = tab;
   }
 

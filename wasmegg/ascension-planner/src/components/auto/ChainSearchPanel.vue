@@ -1234,6 +1234,7 @@
               placeholder="nickname"
               aria-label="Nickname"
               class="rounded-lg border-indigo-200 text-sm font-bold text-slate-800 w-48 disabled:opacity-40"
+              @input="nicknameTouched = true"
             />
           </div>
 
@@ -1247,8 +1248,8 @@
               <span class="font-bold">Include the full CSV</span> — every chain this run priced, one row per leg ({{
                 (store.csvRows || 0).toLocaleString()
               }}
-              chains). The JSON above is the headline; this is the working. It makes real analysis possible and it is a
-              few megabytes.
+              chains). The JSON above is the headline; this is the working. It is compressed before it leaves your
+              machine, which takes a large run from about fifteen megabytes to well under one.
             </span>
           </label>
         </div>
@@ -1305,8 +1306,29 @@
           with exact counts is close to a fingerprint among people who know you; your
           <span class="font-semibold">timezone</span> and local plan start; and your
           <span class="font-semibold">available hours</span>. The inventory is included because a duration means nothing
-          without knowing what it was simulated with — the same plan on commons is a different claim. If that trade is
-          not worth it to you, do not send it.
+          without knowing what it was simulated with — the same plan on commons is a different claim.
+          <span v-if="includeCsv"
+            >The <span class="font-semibold">CSV goes too</span>, ticked by default above: the same run in full —
+            every chain it priced, one row per leg, with start and end times in your plan's timezone. Untick it to
+            send the headline alone.</span
+          >
+          If that trade is not worth it to you, do not send it.
+        </p>
+
+        <!-- Where a submission ends up. A board nobody can find is not a shared repository of
+             anything, and "it was sent somewhere" is a poor answer to "sent where?". -->
+        <p v-if="store.submitUrl" class="text-[11px] text-indigo-900/70 leading-relaxed">
+          Submissions land on the
+          <a
+            :href="store.leaderboardUrl"
+            target="_blank"
+            rel="noopener"
+            class="font-bold text-indigo-700 underline hover:text-indigo-900"
+            >chain leaderboard</a
+          >
+          — fastest chain per person, and every row opens to show the artifacts, stones and per-leg
+          timings it was simulated with. Read it as "what shapes are winning for people": a duration
+          depends on the account as much as on the chain.
         </p>
 
         <p v-if="!store.submitUrl" class="text-[11px] text-indigo-900/70 leading-relaxed">
@@ -1362,6 +1384,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
+import { useEidsStore } from 'lib';
 import { useChainSearchStore } from '@/stores/chainSearch';
 import { useAutoPlannerStore } from '@/stores/autoPlanner';
 import { ACCURACY_SAMPLE, EFFORT_NOTES, EFFORT_ORDER, NEAR_OPTIMAL_SHARE } from '@/search/effort';
@@ -1422,11 +1445,37 @@ function toggleInventory(): void {
 const optIn = ref(false);
 /** Anonymous by default: crediting yourself should be a choice, not the fallback. */
 const anonymous = ref(true);
-/** Free text the player may attach. Never derived from the account, and ignored when anonymous. */
-const nickname = ref('');
-/** Send the run's full CSV alongside the JSON. Off by default: it is a few megabytes and the
- *  headline answer does not need it. */
-const includeCsv = ref(false);
+/** The name already shown in the header's ID box, for prefilling the credit field.
+ *
+ *  Deliberately NOT `eidsStore.displayName()`, which falls back to the raw EID when an account has
+ *  neither a manual nickname nor a username captured from a backup. Prefilling that would put the
+ *  player ID into a payload whose own consent text promises it is not there. Blank is the correct
+ *  default in that case -- the player can type whatever they want. */
+const eidsStore = useEidsStore();
+const accountName = computed(() => {
+  const entry = eidsStore.eids.get(props.playerId.trim());
+  return entry?.nickname || entry?.username || '';
+});
+
+/** Free text the player may attach, ignored when anonymous. Seeded from the account's display
+ *  name so crediting yourself is one radio click rather than retyping a name the app already
+ *  shows, and still free text: anything typed here wins and is never overwritten afterwards. */
+const nickname = ref(accountName.value);
+const nicknameTouched = ref(false);
+// The username is captured when a backup finishes loading, which can land after this panel has
+// mounted. Keep following it until the player edits the box themselves.
+watch(accountName, name => {
+  if (!nicknameTouched.value) nickname.value = name;
+});
+
+/** Send the run's full CSV alongside the JSON. On by default: the per-leg rows are what make a
+ *  pooled dataset worth anything beyond a ranking, and the whole block already sits behind an
+ *  unticked opt-in, so this is not the checkbox standing between anyone and an accidental upload.
+ *
+ *  It costs the submitter almost nothing now that it is gzipped in the browser first -- 15.3 MB
+ *  of chain table compresses to 0.66 MB, measured -- which is also what let the collector keep it
+ *  in KV instead of needing an R2 bucket. */
+const includeCsv = ref(true);
 const showPayload = ref(false);
 const submitState = ref<'idle' | 'sending' | 'done'>('idle');
 const submitMessage = ref('');

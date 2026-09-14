@@ -80,7 +80,52 @@ VITE_EGG_PROXY=https://egg-proxy.<you>.workers.dev pnpm fastbuild
 tools need — the ascension planner does not.
 
 **Check it worked** by watching the network tab: requests should go to your Worker, and a
-player-ID fetch should return a backup instead of a CORS error.
+player-ID fetch should return a backup instead of a CORS error. From a page served on your
+origin, this is enough -- a 200 whose body you can read is a CORS pass:
+
+```js
+await (await fetch('https://<your-worker>.workers.dev/?url=https://www.auxbrain.com' +
+  '/ei/bot_first_contact', { method: 'POST', mode: 'cors', body: 'data=' })).text()
+// -> "EI user id must be set at index 4" (base64). The game server answered; CORS is fine.
+```
+
+Note the endpoint is `/ei/bot_first_contact`; `/ei/first_contact` answers 405 and looks like a
+proxy fault when it is not.
+
+### Configure it once instead of per-command
+
+`VITE_EGG_PROXY` and `VITE_PREVIEW_HOSTS` both come out of `.env.local` in this directory
+(gitignored -- it holds your own worker URL and hostname). `vite.config.ts` reads it through
+`loadEnv`, so a plain `pnpm fastbuild && pnpm serve` is already configured; a shell variable
+still overrides it for a one-off.
+
+---
+
+## 1b. Serving it on your own domain
+
+`pnpm serve` is `vite preview`, and vite refuses any request whose `Host` header it does not
+recognise -- DNS-rebinding protection, with localhost the only name it knows. Behind a reverse
+proxy or a Cloudflare tunnel every request comes back `Blocked request. This host is not
+allowed`, which looks like a broken app and is really a one-line config gap.
+
+The hostname is supplied at run time so nobody's private domain ends up in the repo:
+
+```bash
+VITE_PREVIEW_HOSTS=egg.example.org pnpm serve
+```
+
+Comma-separate for several. Unset keeps the safe localhost-only default.
+
+Check it without a tunnel:
+
+```bash
+curl -s -H "Host: egg.example.org" http://127.0.0.1:4173/ascension-planner/ | head -3
+```
+
+`vite preview` serves a build, not sources -- it does not re-read `dist/` layout on the fly, so
+rebuild (`pnpm fastbuild`) and reload after any change. For a long-lived deployment prefer a
+plain static server or Netlify over `vite preview`; preview is a development convenience and has
+no allowlist beyond this one.
 
 ---
 
@@ -93,8 +138,42 @@ database would be borrowing trouble.
 ```bash
 cd collector
 npx wrangler kv namespace create SUBMISSIONS   # paste the printed id into wrangler.toml
-npx wrangler deploy
+npx wrangler deploy --config "$PWD/wrangler.toml"
 ```
+
+**One KV namespace holds everything — no R2, no payment method on the account.** Submissions are
+small JSON under `sub:`; a run's full CSV is gzipped by the browser and stored under `csv:`.
+Measured on real output: 11,000 chains is 15.3 MB of text and **0.66 MB gzipped**, about 23x,
+because a chain table is overwhelmingly repeated numbers and timestamps. KV's ceiling is 25 MB
+per value, so that fits with room to spare.
+
+Compression happens in the app, not here, and not only to shrink the upload: the free Workers
+plan allows roughly 10ms of CPU per request, and gzipping fifteen megabytes would spend that many
+times over. The Worker stores the bytes it is handed and serves them back still compressed with
+`Content-Encoding: gzip`, letting the browser inflate them.
+
+The cost of that: the `EI\d{16}` sweep the JSON path runs is a regex over text and cannot read an
+opaque gzip stream. So the sweep moved into the app, which scrubs before compressing. A hand-made
+gzip posted directly to `/csv` is **not** swept — it is only size-capped and checked for gzip
+magic. The CSV never carried a player id to begin with (`buildChainsCsv` has no `playerId` in its
+metadata), so this remains belt-and-braces, just enforced one step upstream.
+
+**The `--config` flag is not optional, and leaving it off is confusing rather than obviously
+wrong.** Wrangler picks its project root by walking up from the working directory looking for a
+`package.json`, and the first one it finds is the planner's, one level above. From there it
+looks for `wrangler.toml` in the planner directory, does not find one, and reports a *missing
+entry point* -- advice about `main = "src/index.ts"` for a Worker whose config it never read. An
+absolute path pins it. `kv namespace create` needs no config, which is why that half works
+unaided.
+
+Check the whole thing without publishing:
+
+```bash
+npx wrangler deploy --dry-run --config "$PWD/wrangler.toml"
+```
+
+That compiles the Worker and resolves the bindings, printing the KV namespace it found, then
+exits. It is the cheapest way to catch a config mistake before an endpoint is public.
 
 Then build the app pointing at it:
 
@@ -111,10 +190,18 @@ no button.
 
 | | |
 |---|---|
-| `POST /submit` | one submission; validated, scrubbed, rate-limited to one per IP per minute |
+| `POST /submit` | one submission; validated against a whitelist, rate-limited to one per IP per minute |
+| `POST /csv?id=<id>` | that run's gzipped CSV. Must be gzip, capped at 8 MB compressed |
+| `GET /csv?id=<id>` | it back, served `Content-Encoding: gzip` |
 | `GET /leaderboard?final=490&limit=50` | best chain per submitter, already in duration order |
 | `GET /all` | everything, for your own analysis |
 | `GET /` | the leaderboard page |
+
+Rows from `/leaderboard` and `/all` carry two fields that are **not stored**: `id`, taken from the
+last segment of the KV key, and `hasCsv`. The second comes from a single `list({prefix:'csv:'})`
+per request rather than an existence check per row — the ids already line up, so storing a flag
+on the record would only add a read-modify-write on every upload, and writes are the scarce quota
+(~1,000/day on the free plan; each submission costs two).
 
 ### What is stored, and what is not
 
@@ -127,8 +214,19 @@ metadata and never printed one. The Worker still sweeps `EI\d{16}` out of every 
 writing, for the case where someone posts a hand-made payload.
 
 Stored: chain, ascension count, duration, local start/end, timezone, TE range, effort tier,
-schedule window, whether shifts were held, waiting hours, artifact and stone counts, per-leg
-strategy and peak delivery, chains priced, an optional 40-character nickname.
+schedule window, whether shifts were held, waiting hours, per-leg strategy and peak delivery,
+chains priced, an optional 40-character nickname, and the inventory as described next.
+
+**Artifacts are labels; stones are counted, and both are narrowed.** Schema 2 sends the best piece
+per family by name -- eight entries, no numbers -- rather than every tier owned with exact counts.
+Stones are cut to the three a virtue set actually sockets: tachyon and quantum on the delivery
+side, lunar on the earnings side. The other seven families are in the inventory and appear in no
+set the simulator builds, so reporting them was a long list saying nothing. An artifact slot
+takes one artifact, so owning 732 T1C necklaces and one T4L never changed the answer; the
+simulator wears the T4L. Stones keep their counts because they are socketed three at a time and
+how many you hold decides what can be built. Measured on a real account, this took the inventory
+from 102 entries and 2,455 characters to 8 artifacts and 7 stone lines -- a smaller payload and a much duller
+fingerprint, for no loss of anything that determined the result.
 
 Not stored: IP addresses beyond a rate-limit key that expires after 60 seconds, headers,
 cookies, or anything derived from the connection.

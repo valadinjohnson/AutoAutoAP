@@ -77,6 +77,28 @@
                     >BETA</span
                   >
                 </button>
+                <!-- Only when a collector is configured. A fork with no VITE_SUBMIT_URL has no
+                     board to show, and a tab that opens onto an error is worse than no tab. -->
+                <button
+                  v-if="chainSearchStore.submitUrl"
+                  class="px-6 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-[0.15em] transition-all duration-300 flex items-center gap-2"
+                  :class="
+                    plannerTab === 'leaderboard'
+                      ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-100'
+                      : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'
+                  "
+                  @click="plannerTab = 'leaderboard'"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
+                    />
+                  </svg>
+                  Leaderboard
+                </button>
               </div>
             </div>
 
@@ -421,6 +443,13 @@
         <ChainSearchPanel :player-id="playerId" />
       </div>
 
+      <div v-else-if="plannerTab === 'leaderboard'" class="max-w-6xl mx-auto mt-6">
+        <!-- Reads the collector directly; the Worker serves the same data as its own page. `use`
+             drops a chain into the Auto Planner, which is the only way a number from someone
+             else's account becomes a claim about yours. -->
+        <LeaderboardPanel @use="useLeaderboardChain" />
+      </div>
+
       <!-- Undo Confirmation Dialog -->
       <UndoConfirmationDialog
         v-if="undoAction"
@@ -547,6 +576,8 @@ import PlanLibrary from '@/components/PlanLibrary.vue';
 import PlanSelectionDialog from '@/components/PlanSelectionDialog.vue';
 import AutomaticPlanner from '@/components/auto/AutomaticPlanner.vue';
 import ChainSearchPanel from '@/components/auto/ChainSearchPanel.vue';
+import LeaderboardPanel from '@/components/auto/LeaderboardPanel.vue';
+import { useChainSearchStore } from '@/stores/chainSearch';
 import { useSalesStore } from '@/stores/sales';
 import { hashID, saveMetadata, loadMetadata } from '@/lib/storage/db';
 import { useActionExecutor } from '@/composables/useActionExecutor';
@@ -575,6 +606,16 @@ import {
 const isDev = import.meta.env.DEV;
 
 const playerId = ref(new URLSearchParams(window.location.search).get('playerId') || getSavedPlayerID() || '');
+
+const chainSearchStore = useChainSearchStore();
+
+/** Take a chain off the board into the Auto Planner. It is someone else's ANSWER, not a result
+ *  for this account -- their artifacts and starting TE produced it -- so this loads the shape and
+ *  leaves the pricing to a run here. */
+function useLeaderboardChain(chain: number[]): void {
+  chainSearchStore.applyChain(chain, false);
+  plannerTab.value = 'automatic';
+}
 const initialStateStore = useInitialStateStore();
 const actionsStore = useActionsStore();
 const uiStore = useUIStore();

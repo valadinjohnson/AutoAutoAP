@@ -19,3 +19,7 @@ wasmegg/ascension-planner/*.json
 
 # Headless search CLI build output
 dist-search/
+
+# Vite machine-local env (proxy URLs, preview hostnames)
+.env.local
+.env.*.local

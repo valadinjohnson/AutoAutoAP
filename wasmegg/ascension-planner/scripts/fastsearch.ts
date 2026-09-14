@@ -483,6 +483,20 @@ WHAT-IF  (neither edits the save)
   --add-artifact compass:legendary
   --show-loadout            Print the chosen ELR loadout and exit.
 
+DIAGNOSTICS  (for working on the search itself, not for planning a run)
+  --debug                   Verbose per-stage tracing.
+  --dump-state              Print the parsed farm state and exit.
+  --show-loadout            As above; pairs with --add-artifact to check what a new piece changes.
+  --prune N                 Override the descent pruning bound. Lower prunes harder and can
+                            drop the true optimum -- the default is what the accuracy figures
+                            were measured with.
+  --max-elr N               Cap peak delivery, for reproducing a bound by hand.
+  --override-ascension N --override-days D --override-hours H
+                            Force one leg's length instead of simulating it. For isolating
+                            whether a disagreement is in the chain or in one leg.
+  --reactive-backup         Hand the backup to Pinia reactively. Much slower; only useful when
+                            chasing a mismatch between CLI and browser results.
+
 EXAMPLES
   node dist-search/fastsearch.js --backup me.json --effort thorough --find-seed --jobs 12 \\
       --available-from 9 --available-to 23 --csv run.csv
@@ -1385,14 +1399,11 @@ async function main() {
   const planMode = has('effort') || has('exhaustive');
   if (jobs > 1 && !arg('shard') && !planMode && !has('worker')) return runSharded(jobs);
 
-  await loadPlayer();
-
-  const final = +(arg('final', '490')!);
+  // Argument parsing and validation runs BEFORE the backup is touched. Every check in here is
+  // pure -- it reads argv and nothing else -- and leaving it below `loadPlayer()` meant a typo'd
+  // hour was reported only after a file read, or after a --player-id round trip to the API. Fail
+  // on the flags first; the account is the expensive part.
   const tz = arg('timezone', Intl.DateTimeFormat().resolvedOptions().timeZone)!;
-  const now = new Date();
-  const startDate = arg('start-date', now.toISOString().slice(0, 10))!;
-  const startTime = arg('start-time', String(now.getHours()).padStart(2, '0') + ':00')!;
-  const planStart = getLocalTimestampInTimezone(startDate, startTime, tz);
 
   // When the player can act, in `tz`. Two spellings of the same thing:
   //   --available-from 7 --available-to 23 [--available-days sat,sun]
@@ -1442,14 +1453,41 @@ async function main() {
         if (i < 0 || i > 6) throw new Error('--available-days: unrecognised day "' + t + '"');
         return i;
       });
+    // Range-check before `isConstrained`, which answers only "does this rule anything out" and
+    // returns false for a malformed hour as well as for an empty one. Sharing one message
+    // between the two meant `--available-from 25` was reported as "rules nothing out" -- a
+    // description of the opposite mistake, sending you to widen a window that was never read.
+    for (const [flag, h] of [['from', fromHour], ['to', toHour]] as const) {
+      if (!Number.isInteger(h) || h < 0 || h > 23) {
+        throw new Error(`--available-${flag}: expected a whole hour 0-23, got "${h}"`);
+      }
+    }
     availability = { days, fromHour, toHour, timezone: tz };
     if (!isConstrained(availability)) {
       throw new Error('the schedule given rules nothing out (every day, all hours); ' +
                       'drop the flags or narrow it');
     }
-    console.log('available: ' + describeAvailability(availability) +
-                '  (prestiges are pushed into it and charged; shifts are reported only)');
+    // Say what is actually happening, which depends on --no-hold-shifts. This line used to
+    // claim "shifts are reported only" unconditionally, while `deferShifts` defaults to TRUE --
+    // so the default run held and charged every shift and then told you it had not. The whole
+    // point of putting the schedule in the objective is that the number moves; a banner that
+    // misreports which model produced it undermines every duration printed after it.
+    console.log(
+      'available: ' + describeAvailability(availability) +
+        (deferShifts
+          ? '  (prestiges AND the twelve per-ascension shifts are pushed into it and charged)'
+          : '  (prestiges are pushed into it and charged; shifts are reported only, as --no-hold-shifts asks)')
+    );
   }
+
+
+  await loadPlayer();
+
+  const final = +(arg('final', '490')!);
+  const now = new Date();
+  const startDate = arg('start-date', now.toISOString().slice(0, 10))!;
+  const startTime = arg('start-time', String(now.getHours()).padStart(2, '0') + ':00')!;
+  const planStart = getLocalTimestampInTimezone(startDate, startTime, tz);
 
   // --milestone "248@2027-06-01", repeatable. A chain that misses one is not a candidate at all -
   // it is dropped the same way a chain whose simulation failed is dropped. Stated as a TE value

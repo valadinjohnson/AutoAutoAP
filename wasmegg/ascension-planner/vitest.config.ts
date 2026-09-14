@@ -14,7 +14,10 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.{test,spec}.ts'],
+    // collector/ is a standalone Cloudflare Worker with no build step, so its tests live next to
+    // it and are plain .js. They run here rather than in a separate command so `pnpm test` is
+    // still the one thing that has to pass.
+    include: ['src/**/*.{test,spec}.ts', 'collector/**/*.spec.js'],
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],

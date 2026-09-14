@@ -24,14 +24,19 @@
  *
  * The nickname is optional and free text; nothing is derived from the account.
  */
-import type { InventoryCount } from './csv';
+import type { InventoryCount, LoadoutSlot } from './csv';
 import type { Availability } from './availability';
 import { describeAvailability } from './availability';
 import type { LegSummary } from './types';
 
 /** Bumped when the shape changes, so a collector can reject or migrate old submissions rather
- *  than mis-reading them. Receivers should refuse anything they do not recognise. */
-export const SUBMISSION_SCHEMA = 1;
+ *  than mis-reading them. Receivers should refuse anything they do not recognise.
+ *
+ *  2: `artifacts` became a list of labels, best-per-family, instead of `{label, count}` for every
+ *     tier owned. The Worker must be redeployed with the matching SCHEMA at the same time -- it
+ *     refuses a schema it does not know, so an app shipped ahead of the collector submits
+ *     nothing. */
+export const SUBMISSION_SCHEMA = 2;
 
 /**
  * The artifact families a virtue ascension can actually equip.
@@ -53,6 +58,31 @@ export const SUBMISSION_SCHEMA = 1;
  * a quirk of the source data, not two different artifacts. Both are listed so a T1 is not
  * silently dropped.
  */
+/**
+ * The stones a virtue ascension actually socket.
+ *
+ * The other seven families -- life, shell, terra, dilithium, clarity, prophecy, soul -- do exist
+ * in the virtue inventory and were being reported wholesale, which was a long list saying nothing:
+ * none of them appear in either set the simulator builds. Tachyon and quantum drive the delivery
+ * side, lunar the earnings side, and those are what a reader needs to judge whether a duration was
+ * reachable on their own account.
+ */
+export const VIRTUE_STONE_FAMILIES: ReadonlySet<string> = new Set([
+  'tachyon-stone',
+  'quantum-stone',
+  'lunar-stone',
+]);
+
+/** Keep only the stones above; falls back to the label when a family did not resolve, the same
+ *  way `keepVirtueArtifacts` does and for the same reason. */
+export function keepVirtueStones(items: InventoryCount[]): InventoryCount[] {
+  return items.filter(s => {
+    if (s.familyId) return VIRTUE_STONE_FAMILIES.has(s.familyId);
+    const l = s.label.toLowerCase();
+    return l.includes('tachyon') || l.includes('quantum') || l.includes('lunar');
+  });
+}
+
 export const VIRTUE_ARTIFACT_FAMILIES: ReadonlySet<string> = new Set([
   'quantum-metronome',
   'interstellar-compass',
@@ -87,6 +117,52 @@ export function keepVirtueArtifacts(items: InventoryCount[]): InventoryCount[] {
       l.includes('tungsten ankh')
     );
   });
+}
+
+/**
+ * The best piece the player owns in each family, and nothing else.
+ *
+ * A real inventory is a long tail of junk: the account this was built against holds 732 T1C
+ * Demeters necklaces and exactly one T4L, and the simulator wears the T4L. Reporting all ninety
+ * entries with exact counts described the hoard rather than the loadout, and a hoard with exact
+ * counts is a much sharper fingerprint than the eight lines that actually determined the answer.
+ *
+ * Best means highest tier, then highest rarity -- decided on `tier`/`rarity` carried through from
+ * the game data, not by parsing "T4L" back out of the label, which would quietly rank "T4L" under
+ * "T4R" on a string compare.
+ *
+ * Counts are dropped here and kept for stones, which is not an inconsistency: an artifact slot
+ * takes one artifact, so owning six changes nothing, while stones are consumed three at a time
+ * per piece and how many you hold decides what can actually be socketed.
+ */
+/**
+ * Families the game data splits in two that are really one artifact.
+ *
+ * `ornate-gusset` is the T1 gusset and `gusset` covers T2-T4 -- a quirk of the source data, not
+ * two different items. Keying on the raw family id therefore gave every account a spurious second
+ * gusset: "T1C Gusset" surviving alongside "T4L Gusset", because they were separate buckets. The
+ * simulator has never treated them as different, so neither should this.
+ */
+const FAMILY_ALIASES: Record<string, string> = {
+  'ornate-gusset': 'gusset',
+};
+
+export function bestPerFamily(items: InventoryCount[]): InventoryCount[] {
+  const best = new Map<string, InventoryCount>();
+  for (const item of items) {
+    // No family means the game data did not resolve it; key on the label so it is kept rather
+    // than silently collapsing every unresolved piece into one bucket.
+    const raw = item.familyId ?? item.label;
+    const key = FAMILY_ALIASES[raw] ?? raw;
+    const cur = best.get(key);
+    if (!cur) {
+      best.set(key, item);
+      continue;
+    }
+    const rank = (x: InventoryCount) => (x.tier ?? 0) * 10 + (x.rarity ?? 0);
+    if (rank(item) > rank(cur)) best.set(key, item);
+  }
+  return [...best.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
 export interface SubmissionLeg {
@@ -124,7 +200,25 @@ export interface Submission {
   /** Total time the plan spends waiting for the player: prestiges held plus shifts held. */
   waitingHours: number | null;
 
-  artifacts: InventoryCount[];
+  /**
+   * The two sets the simulator actually wears, per slot, with the stones in each.
+   *
+   * More informative than the inventory and harder to misread. A virtue DELIVERY set uses its
+   * fourth slot as a stone holder, so the solver picks a T3 legendary ankh over a T4 epic
+   * chalice -- more sockets beats a better base effect -- and without seeing the stones in it,
+   * that choice looks like a bug. The EARNINGS set does not depend on research, so it is the
+   * same in every leg; the delivery set is leg 1's and later legs re-solve.
+   *
+   * Optional: a submission from an older build, or one whose backup could not be read, simply
+   * has no loadouts rather than a wrong one.
+   */
+  delivery?: LoadoutSlot[];
+  earnings?: LoadoutSlot[];
+
+  /** Labels only, best per family. An artifact slot takes one artifact, so the count never
+   *  mattered; see `bestPerFamily`. */
+  artifacts: string[];
+  /** Counted, because how many you hold decides what can be socketed. */
   stones: InventoryCount[];
 
   legs: SubmissionLeg[];
@@ -174,6 +268,9 @@ export interface SubmissionInputs {
   holdShifts: boolean;
   artifacts: InventoryCount[];
   stones: InventoryCount[];
+  /** Solved sets, already reduced to words by `describeLoadoutSlots`. */
+  delivery?: LoadoutSlot[];
+  earnings?: LoadoutSlot[];
   chainsPriced: number;
   /** Injectable so tests are not clock-dependent. */
   now?: number;
@@ -207,8 +304,10 @@ export function buildSubmission(i: SubmissionInputs): Submission {
     waitingHours: waiting === null ? null : Number(waiting.toFixed(2)),
     // Stones are kept wholesale -- they slot into every family above -- while artifacts are
     // narrowed to what a virtue ascension can equip. See VIRTUE_ARTIFACT_FAMILIES.
-    artifacts: keepVirtueArtifacts(i.artifacts).map(a => ({ label: a.label, count: a.count })),
-    stones: i.stones.map(a => ({ label: a.label, count: a.count })),
+    ...(i.delivery?.length ? { delivery: i.delivery } : {}),
+    ...(i.earnings?.length ? { earnings: i.earnings } : {}),
+    artifacts: bestPerFamily(keepVirtueArtifacts(i.artifacts)).map(a => a.label),
+    stones: keepVirtueStones(i.stones).map(a => ({ label: a.label, count: a.count })),
     legs: i.legs.map(l => ({
       te: l.endTE,
       strategy: l.key,

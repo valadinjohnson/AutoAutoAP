@@ -7,7 +7,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  bestPerFamily,
   buildSubmission,
+  keepVirtueStones,
   keepVirtueArtifacts,
   scrubIdentifiers,
   submissionFilename,
@@ -150,6 +152,40 @@ describe('keepVirtueArtifacts', () => {
     expect(kept.map(a => a.label)).toEqual(['T4L Tungsten ankh']);
   });
 
+  it('keeps only the best piece in each family, by tier then rarity', () => {
+    const best = bestPerFamily([
+      { label: 'T1C Demeters necklace', count: 732, familyId: 'demeters-necklace', tier: 1, rarity: 0 },
+      { label: 'T4L Demeters necklace', count: 1, familyId: 'demeters-necklace', tier: 4, rarity: 3 },
+      { label: 'T4C Demeters necklace', count: 59, familyId: 'demeters-necklace', tier: 4, rarity: 0 },
+      { label: 'T3L Tungsten ankh', count: 2, familyId: 'tungsten-ankh', tier: 3, rarity: 3 },
+    ]);
+    // One per family, and the T4L wins despite the T1C being 732x more numerous. Rarity breaks
+    // the tie inside tier 4 -- a plain string sort on the label would rank "T4L" under "T4R".
+    expect(best.map(a => a.label)).toEqual(['T3L Tungsten ankh', 'T4L Demeters necklace']);
+  });
+
+  // The game data files the T1 gusset under `ornate-gusset` and T2-T4 under `gusset`, so keying
+  // on the raw family id left every account with a spurious "T1C Gusset" next to its "T4L Gusset".
+  it('treats the T1 gusset and the T2-T4 gusset as one family', () => {
+    const best = bestPerFamily([
+      { label: 'T1C Gusset', count: 374, familyId: 'ornate-gusset', tier: 1, rarity: 0 },
+      { label: 'T4L Gusset', count: 1, familyId: 'gusset', tier: 4, rarity: 3 },
+    ]);
+    expect(best.map(a => a.label)).toEqual(['T4L Gusset']);
+  });
+
+  it('keeps only the stones a virtue set can socket', () => {
+    const kept = keepVirtueStones([
+      { label: 'T4 Tachyon stone', count: 8, familyId: 'tachyon-stone' },
+      { label: 'T4 Quantum stone', count: 4, familyId: 'quantum-stone' },
+      { label: 'T4 Lunar stone', count: 20, familyId: 'lunar-stone' },
+      { label: 'T2 Shell stone', count: 50, familyId: 'shell-stone' },
+      { label: 'T2 Terra stone', count: 72, familyId: 'terra-stone' },
+      { label: 'T3 Life stone', count: 10, familyId: 'life-stone' },
+    ]);
+    expect(kept.map(s => s.label)).toEqual(['T4 Tachyon stone', 'T4 Quantum stone', 'T4 Lunar stone']);
+  });
+
   it('is applied by buildSubmission', () => {
     const s = buildSubmission(
       inputs({
@@ -159,9 +195,9 @@ describe('keepVirtueArtifacts', () => {
         ],
       })
     );
-    expect(s.artifacts.map(a => a.label)).toEqual(['T4L Lunar totem']);
-    // Stones stay wholesale: they slot into every family that is kept.
-    expect(s.stones).toHaveLength(1);
+    expect(s.artifacts).toEqual(['T4L Lunar totem']);
+    // Stones are narrowed too now -- only the three a virtue set actually sockets.
+    expect(s.stones.every(st => /tachyon|quantum|lunar/i.test(st.label))).toBe(true);
   });
 });
 
@@ -193,7 +229,7 @@ describe('validateSubmission', () => {
 
   it('rejects nonsense durations and oversized payloads', () => {
     expect(validateSubmission({ ...ok(), durationDays: 0 })).toContain('durationDays must be positive');
-    const huge = { ...ok(), artifacts: Array.from({ length: 20000 }, () => ({ label: 'x'.repeat(20), count: 1 })) };
+    const huge = { ...ok(), artifacts: Array.from({ length: 20000 }, () => 'x'.repeat(20)) };
     expect(validateSubmission(huge)).toContain('submission is implausibly large');
   });
 

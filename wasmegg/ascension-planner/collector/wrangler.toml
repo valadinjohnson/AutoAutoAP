@@ -11,17 +11,15 @@ name = "ascension-chain-collector"
 main = "worker.js"
 compatibility_date = "2026-01-01"
 
+# A KV namespace id is an identifier, not a credential -- it is useless without an authenticated
+# session on the account that owns it, which is why Cloudflare's own examples commit it. Created
+# with `wrangler kv namespace create SUBMISSIONS`.
 [[kv_namespaces]]
 binding = "SUBMISSIONS"
-id = "PUT_YOUR_KV_NAMESPACE_ID_HERE"
+id = "77c966d5ec964cc2979f59a190737fd4"
 
-# OPTIONAL. Only needed if you want players to be able to attach the full CSV of a run --
-# every chain priced, one row per leg, a few megabytes each. Without this binding the /csv
-# endpoint answers 501 and the app reports "the CSV was refused" while still counting the
-# submission itself as sent.
-#
-#   wrangler r2 bucket create ascension-chain-csvs
-#
-# [[r2_buckets]]
-# binding = "CSVS"
-# bucket_name = "ascension-chain-csvs"
+# NO R2 BINDING, DELIBERATELY. A run's CSV is gzipped in the browser before it is sent -- 15.3 MB
+# of chain table measures 0.66 MB compressed -- so it fits KV's 25 MB per-value limit and lives
+# under `csv:<id>` in the namespace above. R2 would mean a payment method on the account for a
+# payload that does not need it. See collector/README.md for the tradeoff this makes on the
+# player-id sweep.

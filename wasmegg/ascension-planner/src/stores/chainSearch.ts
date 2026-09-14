@@ -34,6 +34,7 @@ import {
 } from '@/search/persistence';
 import {
   buildChainsCsv,
+  describeLoadoutSlots,
   describeVirtueInventory,
   formatInZone,
   virtueInventory,
@@ -41,7 +42,7 @@ import {
 } from '@/search/csv';
 import { type ShortlistRow } from '@/search/shortlist';
 import { buildView, type ViewId } from '@/search/views';
-import { buildSubmission, submissionFilename, type Submission } from '@/search/submission';
+import { buildSubmission, scrubIdentifiers, submissionFilename, type Submission } from '@/search/submission';
 import { describeAvailability, isConstrained, type Availability } from '@/search/availability';
 import { missedMilestones, usableMilestones, type Milestone } from '@/search/milestones';
 import {
@@ -549,6 +550,10 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       holdShifts: deferShifts.value,
       artifacts: inv.artifacts,
       stones: inv.stones,
+      // Already solved by readInventory() above, so this costs nothing extra -- `elr` is leg 1's
+      // delivery set and `earnings` is the same in every leg.
+      delivery: describeLoadoutSlots(inv.elr),
+      earnings: describeLoadoutSlots(inv.earnings),
       chainsPriced: csvRows.value,
     });
   }
@@ -562,6 +567,10 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
    * all and is the only mode that works offline.
    */
   const submitUrl = (import.meta.env.VITE_SUBMIT_URL as string | undefined)?.trim() || '';
+
+  /** The board itself, derived from the submit endpoint rather than configured separately: they
+   *  are the same Worker, and two env vars that have to agree is one more thing to get wrong. */
+  const leaderboardUrl = computed(() => submitUrl.replace(/\/submit\/?$/, '/'));
 
   /**
    * Ship it. Resolves to a short status string for the UI; never throws.
@@ -580,7 +589,15 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) return { ok: false, message: `collector said ${res.status}` };
+      if (!res.ok) {
+        // Say WHY. The collector answers a rejection with the list of problems -- "unknown
+        // schema 1", "chain must strictly increase" -- and reporting only the status code turned
+        // an answerable message into a wall. A stale build submitting an old schema looked
+        // exactly like a broken collector.
+        const detail = (await res.json().catch(() => ({}))) as { problems?: string[] };
+        const why = detail.problems?.length ? `: ${detail.problems.join('; ')}` : '';
+        return { ok: false, message: `collector said ${res.status}${why}` };
+      }
       id = ((await res.json().catch(() => ({}))) as { id?: string }).id;
     } catch (e) {
       // Ordinary: someone is offline, or the collector is down. It must not look like the run
@@ -592,17 +609,48 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     if (!id) return { ok: true, message: 'sent (no id came back, so the CSV was skipped)' };
     try {
       const csvUrl = `${submitUrl.replace(/\/submit\/?$/, '/csv')}?id=${encodeURIComponent(id)}`;
+      const body = await gzip(scrubIdentifiers(csv));
       const res = await fetch(csvUrl, {
         method: 'POST',
-        headers: { 'content-type': 'text/csv' },
-        body: csv,
+        // Deliberately not `content-encoding: gzip`, which would invite something in the path to
+        // helpfully inflate the body before the Worker sees it. These are gzip bytes being posted
+        // as data, not a transfer encoding, and the type says so.
+        headers: { 'content-type': 'application/gzip' },
+        body,
       });
+      const mb = (n: number) => (n / 1024 / 1024).toFixed(1);
       return res.ok
-        ? { ok: true, message: 'sent, with the full CSV' }
+        ? { ok: true, message: `sent, with the full CSV (${mb(body.byteLength)} MB compressed)` }
         : { ok: true, message: `sent, but the CSV was refused (${res.status})` };
     } catch {
       return { ok: true, message: 'sent, but the CSV upload failed' };
     }
+  }
+
+  /**
+   * Compress the CSV in the browser rather than on the collector.
+   *
+   * Measured on real output: 11,000 chains is 15.3 MB of text and 0.66 MB gzipped, about 23x,
+   * because a chain table is overwhelmingly repeated numbers and timestamps. That is the
+   * difference between a submission that needs R2 (and a payment method on the Cloudflare
+   * account) and one that fits KV's 25 MB per-value limit with room to spare.
+   *
+   * It has to happen HERE and not in the Worker: the free Workers plan allows roughly 10ms of CPU
+   * per request, and compressing fifteen megabytes would spend that many times over. Doing it
+   * client-side also means the upload itself is 23x smaller, which matters more on a home
+   * connection than the CPU does.
+   *
+   * `scrubIdentifiers` runs BEFORE compression, because it cannot run after: the Worker's own
+   * `EI\d{16}` sweep is a regex over text, and an opaque gzip stream is not text. The CSV never
+   * carried a player id in the first place -- `buildChainsCsv` has no playerId in its metadata --
+   * so this is the same belt-and-braces it always was, just enforced one step earlier.
+   */
+  async function gzip(text: string): Promise<ArrayBuffer> {
+    const stream = new CompressionStream('gzip');
+    const writer = stream.writable.getWriter();
+    void writer.write(new TextEncoder().encode(text));
+    void writer.close();
+    return await new Response(stream.readable).arrayBuffer();
   }
 
   function exportCsv(): string {
@@ -997,6 +1045,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     buildRunSubmission,
     sendSubmission,
     submitUrl,
+    leaderboardUrl,
     submissionFilename,
     readInventory,
     csvFilename,
