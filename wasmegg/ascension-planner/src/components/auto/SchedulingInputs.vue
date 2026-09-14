@@ -18,6 +18,11 @@
           @input="handleStartTimeInput"
         />
       </div>
+      <!-- The default is the backup's own timestamp, which is not obvious from a date box that
+           simply has a time in it. Said here so "why is this not now?" has an answer in place. -->
+      <p v-if="backupHint" class="text-[10px] font-bold leading-relaxed px-1" :class="backupHint.class">
+        {{ backupHint.text }}
+      </p>
     </div>
 
     <div class="space-y-2">
@@ -49,9 +54,13 @@
 import { computed, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useAutoPlannerStore } from '@/stores/autoPlanner';
+import { useInitialStateStore } from '@/stores/initialState';
 import { formatUnixToDateInput, formatUnixToTimeInput } from '@/lib/format';
+import { getLocalTimestampInTimezone } from '@/lib/events';
+import { planStartDrift, formatDriftHours, DRIFT_TOLERANCE_HOURS } from '@/lib/planStartTime';
 
 const { startDate, startTime, timezone } = storeToRefs(useAutoPlannerStore());
+const initialStateStore = useInitialStateStore();
 
 const startTimeInput = ref<HTMLInputElement | null>(null);
 const timezoneSelect = ref<HTMLSelectElement | null>(null);
@@ -85,6 +94,42 @@ const setStartTimeToNow = () => {
   startDate.value = formatUnixToDateInput(nowUnix, timezone.value);
   startTime.value = formatUnixToTimeInput(nowUnix, timezone.value);
 };
+
+/**
+ * Tell the user how the start time they are looking at relates to their backup.
+ *
+ * Auto-AP defaults the start to the backup's own instant so the farm state and the clock agree
+ * (see `lib/planStartTime.ts`). Without a line saying so, a start time hours behind the wall clock
+ * reads as a bug; and someone who presses "Now" is choosing to simulate a stale farm as a current
+ * one, which is worth naming rather than leaving to be inferred from a date box.
+ */
+const backupHint = computed<{ text: string; class: string } | null>(() => {
+  const approxTime = initialStateStore.rawBackup?.approxTime;
+  const chosen =
+    startDate.value && startTime.value
+      ? getLocalTimestampInTimezone(startDate.value, startTime.value, timezone.value)
+      : null;
+
+  const drift = planStartDrift(typeof approxTime === 'number' ? approxTime : null, chosen);
+  if (drift === null) return null;
+
+  if (Math.abs(drift) < DRIFT_TOLERANCE_HOURS) {
+    return {
+      text: 'Matches your backup, so the farm being simulated and the clock agree.',
+      class: 'text-emerald-600',
+    };
+  }
+  if (drift < 0) {
+    return {
+      text: `Starts ${formatDriftHours(drift)} before your backup was taken, so the plan begins before the farm state it uses existed.`,
+      class: 'text-amber-600',
+    };
+  }
+  return {
+    text: `Starts ${formatDriftHours(drift)} after your backup was taken. The plan still uses the farm as it was at the backup, so anything you have earned since is not counted.`,
+    class: 'text-amber-600',
+  };
+});
 
 const allTimezones = computed(() => {
   try {

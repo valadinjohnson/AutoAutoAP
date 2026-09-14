@@ -6,7 +6,9 @@
 
       <div class="relative z-10">
         <div class="flex items-center gap-4 mb-8">
-          <div class="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-200">
+          <div
+            class="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-200"
+          >
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
@@ -20,9 +22,13 @@
             v-if="isGenerating"
             class="absolute -inset-4 bg-white/60 backdrop-blur-[1px] z-50 flex items-center justify-center rounded-3xl transition-all duration-300"
           >
-            <div class="flex items-center gap-3 bg-white px-6 py-3 rounded-2xl border border-indigo-100 shadow-xl shadow-indigo-500/10">
+            <div
+              class="flex items-center gap-3 bg-white px-6 py-3 rounded-2xl border border-indigo-100 shadow-xl shadow-indigo-500/10"
+            >
               <div class="w-4 h-4 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
-              <span class="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Form locked while calculating...</span>
+              <span class="text-[10px] font-black text-indigo-600 uppercase tracking-widest"
+                >Form locked while calculating...</span
+              >
             </div>
           </div>
 
@@ -53,7 +59,9 @@
                       class="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-black text-slate-900 outline-none focus:border-indigo-500/50 transition-all pr-10"
                       placeholder="e.g. 300 400 490"
                     />
-                    <div class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 font-black text-[10px]">TE</div>
+                    <div class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 font-black text-[10px]">
+                      TE
+                    </div>
                   </div>
                   <button
                     v-if="deferForEarningsMode"
@@ -66,7 +74,8 @@
                   </button>
                 </div>
                 <p class="text-[10px] font-bold text-slate-400 leading-relaxed px-1 mt-2">
-                  Enter a sequence of target TEs separated by spaces to generate an entire multi-ascension chain at once.
+                  Enter a sequence of target TEs separated by spaces to generate an entire multi-ascension chain at
+                  once.
                 </p>
               </div>
             </div>
@@ -77,14 +86,24 @@
           v-if="showLowClothedTEWarning"
           class="mt-8 p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex gap-3"
         >
-          <svg class="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          <svg
+            class="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-500"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            />
           </svg>
           <p class="leading-relaxed">
-            Auto-AP is really built for players farther along — below 200 Clothed TE, its assumptions (like habs
-            staying full throughout) don't hold up well, so the plan it generates may be pretty suboptimal for
-            you right now. You're welcome to generate one anyway just to see what it does, but for a plan you can
-            actually rely on, raise your Clothed TE in the Virtue Progress section above first.
+            Auto-AP is really built for players farther along — below 200 Clothed TE, its assumptions (like habs staying
+            full throughout) don't hold up well, so the plan it generates may be pretty suboptimal for you right now.
+            You're welcome to generate one anyway just to see what it does, but for a plan you can actually rely on,
+            raise your Clothed TE in the Virtue Progress section above first.
           </p>
         </div>
 
@@ -97,29 +116,70 @@
           <span v-else>{{ ascensionChain.length > 0 ? 'Update Plan' : 'Generate Plan' }}</span>
         </button>
 
-        <div v-if="ascensionChain.length === 0" class="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 space-y-2">
-          <p class="font-bold uppercase tracking-wide text-amber-700">Before you generate — a few assumptions to know about</p>
+        <div
+          v-if="ascensionChain.length === 0"
+          class="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 space-y-2"
+        >
+          <p class="font-bold uppercase tracking-wide text-amber-700">
+            Before you generate — a few assumptions to know about
+          </p>
           <ul class="space-y-1.5 list-disc list-inside leading-relaxed">
-            <li><span class="font-semibold">Habs are always full.</span> To keep processing fast, Auto-AP assumes full habs throughout. Results are most reliable once you're around 100 TE and time to fill habs is negligible.</li>
-            <li><span class="font-semibold">Your artifacts don't improve.</span> The plan is built around whatever artifacts you have right now — it won't account for better gear you might find later.</li>
-            <li><span class="font-semibold">No downtime between ascensions.</span> Each ascension is assumed to start the moment the previous one ends.</li>
-            <li><span class="font-semibold">You never sleep.</span> Auto-AP doesn't do any accounting for sleep hours.</li>
+            <li>
+              <span class="font-semibold">Habs are always full.</span> To keep processing fast, Auto-AP assumes full
+              habs throughout. Results are most reliable once you're around 100 TE and time to fill habs is negligible.
+            </li>
+            <li>
+              <span class="font-semibold">Your artifacts don't improve.</span> The plan is built around whatever
+              artifacts you have right now — it won't account for better gear you might find later.
+            </li>
+            <li>
+              <span class="font-semibold">No downtime between ascensions.</span> Each ascension is assumed to start the
+              moment the previous one ends.
+            </li>
+            <li>
+              <span class="font-semibold">You never sleep.</span> Auto-AP doesn't do any accounting for sleep hours.
+            </li>
           </ul>
-          <p class="text-amber-600 leading-relaxed">Use this as a starting point, not a final word. Your actual results may vary.</p>
+          <p class="text-amber-600 leading-relaxed">
+            Use this as a starting point, not a final word. Your actual results may vary.
+          </p>
 
           <div class="border-t border-amber-200 pt-3 mt-1">
-            <p class="font-bold uppercase tracking-wide text-amber-700 mb-2">Each ascension will have exactly this shift order (except that it will consider CKI vs CIK starts):</p>
+            <p class="font-bold uppercase tracking-wide text-amber-700 mb-2">
+              Each ascension will have exactly this shift order (except that it will consider CKI vs CIK starts):
+            </p>
             <ul class="space-y-1.5 list-disc list-inside leading-relaxed">
-              <li><span class="font-semibold">C1</span> — Spends up to 30 minutes with the primary target being fleet size and Graviton Coupling.</li>
-              <li><span class="font-semibold">K1</span> — Spends up to 30 minutes buying the best vehicles it can afford. Swaps places with I1 below if I1 can finish in under an hour.</li>
-              <li><span class="font-semibold">I1</span> — Max Chicken Universes. Runs before K1 instead if it can finish in under an hour.</li>
-              <li><span class="font-semibold">C2</span> — Maxes fleet size research. If it can afford Graviton Coupling within 4 hours, it does.</li>
+              <li>
+                <span class="font-semibold">C1</span> — Spends up to 30 minutes with the primary target being fleet size
+                and Graviton Coupling.
+              </li>
+              <li>
+                <span class="font-semibold">K1</span> — Spends up to 30 minutes buying the best vehicles it can afford.
+                Swaps places with I1 below if I1 can finish in under an hour.
+              </li>
+              <li>
+                <span class="font-semibold">I1</span> — Max Chicken Universes. Runs before K1 instead if it can finish
+                in under an hour.
+              </li>
+              <li>
+                <span class="font-semibold">C2</span> — Maxes fleet size research. If it can afford Graviton Coupling
+                within 4 hours, it does.
+              </li>
               <li><span class="font-semibold">K2</span> — Max Vehicles and Hyperloop Train Cars.</li>
               <li><span class="font-semibold">R1</span> — Buys as many silos as possible within one hour.</li>
-              <li><span class="font-semibold">C3</span> — Purchases remaining Delivery Rate-boosting research: lay rate, shipping capacity, and hab capacity.</li>
+              <li>
+                <span class="font-semibold">C3</span> — Purchases remaining Delivery Rate-boosting research: lay rate,
+                shipping capacity, and hab capacity.
+              </li>
               <li><span class="font-semibold">H1</span> — Swaps to the optimal artifact loadout for Delivery Rate.</li>
-              <li><span class="font-semibold">K3</span> — Buys new hyperloop cars unlocked by C3, then waits out the ascension until the TE goal is reached.</li>
-              <li><span class="font-semibold">C4 / I2 / R2 / H2</span> — Each shifts to its respective virtue egg and waits until that egg's share of the TE goal is met.</li>
+              <li>
+                <span class="font-semibold">K3</span> — Buys new hyperloop cars unlocked by C3, then waits out the
+                ascension until the TE goal is reached.
+              </li>
+              <li>
+                <span class="font-semibold">C4 / I2 / R2 / H2</span> — Each shifts to its respective virtue egg and
+                waits until that egg's share of the TE goal is met.
+              </li>
             </ul>
           </div>
         </div>
@@ -137,7 +197,12 @@
             class="flex items-center gap-2 px-6 py-2.5 bg-white border border-slate-200 hover:border-indigo-300 hover:text-indigo-600 text-slate-600 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-slate-200 disabled:hover:text-slate-600"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
+              />
             </svg>
             {{ copySuccess ? 'Copied!' : 'Copy Summary' }}
           </button>
@@ -150,11 +215,22 @@
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
-            <svg v-else-if="saveToLibrarySuccess" class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg
+              v-else-if="saveToLibrarySuccess"
+              class="w-4 h-4 text-green-500"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
             </svg>
             <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"
+              />
             </svg>
             {{ isSavingToLibrary ? 'Saving...' : saveToLibrarySuccess ? 'Saved!' : 'Save to Library' }}
           </button>
@@ -168,7 +244,12 @@
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
             <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+              />
             </svg>
             {{ isExporting ? 'Exporting...' : 'Export Plan' }}
           </button>
@@ -240,6 +321,10 @@ import { useAscensionGenerator } from '@/auto/useAscensionGenerator';
 import { useChainSearchStore } from '@/stores/chainSearch';
 import { useEarningsClothedTE } from '@/composables/useEarningsClothedTE';
 import { loadAutoPlannerSchedule, saveAutoPlannerSchedule } from '@/lib/autoPlannerFormCache';
+import { formatUnixToDateInput, formatUnixToTimeInput } from '@/lib/format';
+import { getLocalTimestampInTimezone } from '@/lib/events';
+import { resolvePlanStart } from '@/lib/planStartTime';
+import { useInitialStateStore } from '@/stores/initialState';
 import { isTestingEnvironment } from '@/lib/isTestingEnvironment';
 import { iconURL } from 'lib';
 import SchedulingInputs from './SchedulingInputs.vue';
@@ -253,8 +338,10 @@ import ValidationDialog from './ValidationDialog.vue';
 const autoPlannerStore = useAutoPlannerStore();
 const virtueStore = useVirtueStore();
 const truthEggsStore = useTruthEggsStore();
+const initialStateStore = useInitialStateStore();
 
-const { ascensionChain, timezone, startDate, startTime, targetTE, deferForEarningsMode } = storeToRefs(autoPlannerStore);
+const { ascensionChain, timezone, startDate, startTime, targetTE, deferForEarningsMode } =
+  storeToRefs(autoPlannerStore);
 
 // The forced-490 ascension is a silent bonus card — don't count it in the "A1 of N" denominator.
 const visibleTotal = computed(() => {
@@ -285,19 +372,38 @@ if (!timezone.value) {
   timezone.value = virtueStore.ascensionTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
-// Initialize start date/time defaults
-const now = new Date();
-if (!startDate.value) {
-  startDate.value = new Intl.DateTimeFormat('en-CA', { timeZone: timezone.value }).format(now);
-}
-if (!startTime.value) {
-  startTime.value = new Intl.DateTimeFormat('en-GB', {
-    timeZone: timezone.value,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(now);
-}
+/**
+ * Default the plan start to the moment the backup was taken, not to `now`.
+ *
+ * The rule and the reasoning live in `lib/planStartTime.ts`, which is tested directly; this only
+ * converts between its unix seconds and the date/time input strings the form holds.
+ *
+ * `immediate` handles the usual case, where the backup is already loaded by the time this tab
+ * mounts. The watch covers a backup arriving afterwards (a refresh, or a player ID submitted with
+ * the Auto tab already open). Only the first backup to arrive sets the default, so a later refresh
+ * never overwrites a start time the user has typed since.
+ */
+let startDefaulted = false;
+watch(
+  () => initialStateStore.rawBackup?.approxTime,
+  approxTime => {
+    if (startDefaulted) return;
+    const backupSeconds = typeof approxTime === 'number' ? approxTime : null;
+    const currentSeconds =
+      startDate.value && startTime.value
+        ? getLocalTimestampInTimezone(startDate.value, startTime.value, timezone.value)
+        : null;
+
+    const resolved = resolvePlanStart({ backupSeconds, currentSeconds, nowSeconds: Date.now() / 1000 });
+    if (resolved !== null) {
+      startDate.value = formatUnixToDateInput(resolved, timezone.value);
+      startTime.value = formatUnixToTimeInput(resolved, timezone.value);
+    }
+    // Without a usable backup there is nothing better to sync to, so stay open to a later one.
+    if (backupSeconds !== null && backupSeconds > 0) startDefaulted = true;
+  },
+  { immediate: true }
+);
 
 // Initialize Target TE to current + 30 once store data loads
 let targetTEInitialized = false;

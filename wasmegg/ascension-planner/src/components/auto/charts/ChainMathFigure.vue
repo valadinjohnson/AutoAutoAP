@@ -1,3 +1,24 @@
+<!--
+  One of the four figures in the Chain Search explainer, picked by `kind`.
+
+  Hand-drawn inline SVG rather than ECharts. This app's echarts registration
+  (`lib/charts/echarts.ts`) pulls in LineChart only, and these four need bars as well; adding the
+  bar and heatmap components to a shared, tree-shaken bundle to draw four pictures that never
+  change would cost every page that imports a chart. The data is static and the drawing is a few
+  dozen lines of path arithmetic, so there is nothing a charting library would be doing here.
+
+  Each `kind` supplies its own margins, domains and ticks in `spec`, then `points`, `bars` and
+  `annotations` build from the series. Right-hand margins are wide on the two annotated sweeps
+  because their callouts are written into that gutter: a label placed inside the plot lands on the
+  line and stops being readable. Where a label has to sit over the plot it carries a white
+  `paint-order: stroke` halo for the same reason.
+
+  Colours follow the app's own palette: indigo for the series, amber for the thing being pointed
+  at (run-ends, the cost of a bad choice), emerald for the best value. The indigo/amber/emerald
+  trio was run through a colourblind-separation check as a categorical set before being used. They
+  are hex literals rather than CSS variables because these are SVG presentation attributes, which
+  do not resolve `var()`; using the tokens would mean moving every fill into a stylesheet.
+-->
 <template>
   <figure class="m-0">
     <div class="rounded-xl border border-slate-200 bg-white p-3 overflow-x-auto">

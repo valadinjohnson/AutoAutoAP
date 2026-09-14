@@ -1,3 +1,26 @@
+<!--
+  The Chain Search explainer: what the problem is, how the search attacks it, and the ask.
+
+  The panel below this one asks for hours of the reader's own CPU on a run that can take all
+  night, so the case for spending it has to be reachable without leaving the page. Everything here
+  is prose and four static figures; nothing in this component touches the search or the simulator.
+
+  ORDER IS THE ARGUMENT. Problem, then algorithm, then the request for data, because the request
+  only makes sense once the reader knows that three accounts is what is holding the answer up.
+  Section three sits in its own colour for the same reason: it is the only part that asks for
+  something rather than explaining something.
+
+  THE LONG TWO START CLOSED. They are reference material, and a repeat visitor wants the effort
+  slider, not four figures between them and it. "Help crack the formula" stays open because nobody
+  opens a section with that title unprompted.
+
+  Figures come from `lib/charts/chainSearchMath.ts`, which holds exhaustive-sweep output as
+  literals. Any number quoted in the prose next to a figure is interpolated from that module
+  wherever it reasonably can be, so re-running a sweep and pasting new data cannot leave a sentence
+  asserting the old result. The few that are still typed out (4913 grid points, the 37.4-day
+  maxLast figure, 8.6 and 12.0 days) come from runs whose raw output is not in this repo, and are
+  documented in FOR_MATH_NERDS.md instead.
+-->
 <template>
   <div class="space-y-4">
     <!-- What the problem is, before any mention of how it is attacked. -->
@@ -284,9 +307,11 @@ import { reactive } from 'vue';
 import ChainMathFigure from './charts/ChainMathFigure.vue';
 import { DISTRIBUTION, SAWTOOTH_STATS, SEED_SENSITIVITY } from '@/lib/charts/chainSearchMath';
 
-// Open by default. A collapsed form of this reads as optional, and most people who get here have
-// not seen any of it before.
-const open = reactive({ how: true, algorithm: true, help: true });
+// The two long reads start closed: they are reference material, and a repeat visitor scrolling
+// for the effort slider should not have to scroll past four figures to reach it. The ask stays
+// open because it is three short paragraphs and nobody opens a section titled "help crack the
+// formula" on spec.
+const open = reactive({ how: false, algorithm: false, help: true });
 
 // Read off the data rather than transcribed into the prose, so re-running the sweeps and pasting a
 // new SEED_SENSITIVITY cannot leave the sentence claiming the old numbers.
