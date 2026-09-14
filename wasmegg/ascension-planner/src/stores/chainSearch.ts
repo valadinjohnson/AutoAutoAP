@@ -45,14 +45,14 @@ import { buildView, type ViewId } from '@/search/views';
 import { buildSubmission, scrubIdentifiers, submissionFilename, type Submission } from '@/search/submission';
 import { describeAvailability, isConstrained, type Availability } from '@/search/availability';
 import { missedMilestones, usableMilestones, type Milestone } from '@/search/milestones';
-import { defaultSeedChain, seedChainIssue, usableCheckpoints } from '@/search/seedChain';
+import { defaultSeedChain, seedChainIssue, usableCheckpoints, fitSeedToLimits } from '@/search/seedChain';
 import {
   getArtifactLoadoutFromBackup,
   getOptimalEarningsSet,
   getOptimalELRSet,
   type EquippedArtifact,
 } from '@/lib/artifacts';
-import type { EffortTier, LegSummary, SearchInputs } from '@/search/types';
+import type { EffortTier, LegSummary, PricedChain, SearchInputs } from '@/search/types';
 import { useActionsStore } from './actions';
 import { useAutoPlannerStore } from './autoPlanner';
 import { useInitialStateStore } from './initialState';
@@ -372,10 +372,22 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     });
   });
 
-  /** Why the current seed cannot produce an answer inside the Limits box, or null when it can. */
+  /** Why the current seed cannot produce an answer inside the Limits box, or null when it can.
+   *  Probe-aware: on Quick and Balanced nothing in the run changes the seed's length at all. */
   const seedIssue = computed(() =>
-    findSeedFirst.value ? null : seedChainIssue(seedChain.value, minPrestiges.value, maxPrestiges.value)
+    findSeedFirst.value
+      ? null
+      : seedChainIssue(seedChain.value, minPrestiges.value, maxPrestiges.value, {
+          countProbe: EFFORT[effort.value].countProbe,
+        })
   );
+
+  /** Rewrite the seed box so the chain sits inside the Limits box. Drives the panel's one-click fix. */
+  function fitSeedToLimitsNow(): void {
+    seedOverride.value = fitSeedToLimits(seedChain.value, minPrestiges.value, maxPrestiges.value)
+      .slice(0, -1)
+      .join(' ');
+  }
 
   /** Chains the coarse scan will price, or 0 when it is not going to run. */
   const coarseChains = computed(() => {
@@ -476,14 +488,37 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
    *  way of looking at one run's results, not a setting that should outlive the run. */
   const shortlistView = ref<ViewId>('balanced');
 
+  /**
+   * Every chain this run priced, flattened for the shape chart.
+   *
+   * Refreshed on the shortlist's beat rather than per batch for the same reason it is: `onCache`
+   * fires with the whole cache after every batch, and a reactive write of thousands of points on
+   * that path would cost more than the chart is worth.
+   */
+  const pricedChains = ref<PricedChain[]>([]);
+
   function refreshShortlist(force = false): void {
     const now = Date.now();
     if (!force && now - lastShortlistAt < SHORTLIST_INTERVAL_MS) return;
     lastShortlistAt = now;
-    shortlist.value = buildView(allEntries(), shortlistView.value, {
+    const entries = allEntries();
+    shortlist.value = buildView(entries, shortlistView.value, {
       planStart: planStartUsed.value || planStart.value,
       timezone: useAutoPlannerStore().timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
+    pricedChains.value = entries
+      .filter(e => e.seconds > 0)
+      .map(e => {
+        const chain = e.key.split(',').map(Number);
+        return {
+          chain,
+          days: e.seconds / 86400,
+          prestiges: chain.length,
+          // The last checkpoint before the target: the axis every measured sawtooth is drawn
+          // against, so the user's own run can be read the same way as the explainer's figures.
+          lastCheckpoint: chain.length > 1 ? chain[chain.length - 2] : chain[0],
+        };
+      });
   }
 
   /** Coarse-scan results plus driver cache, de-duplicated by chain, driver winning. */
@@ -1047,6 +1082,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     finishedCleanly,
     seedChain,
     seedIssue,
+    fitSeedToLimitsNow,
     seedOverride,
     estimateForCurrentSettings,
     findSeedFirst,
@@ -1054,6 +1090,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     runLog,
     csvRows,
     shortlist,
+    pricedChains,
     shortlistView,
     setShortlistView,
     // actions

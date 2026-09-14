@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { defaultSeedChain, seedChainIssue, usableCheckpoints, MAX_LAST_GAP } from './seedChain';
+import { defaultSeedChain, seedChainIssue, usableCheckpoints, fitSeedToLimits, MAX_LAST_GAP } from './seedChain';
 
 describe('defaultSeedChain', () => {
   it('produces a chain inside the configured prestige range, not a 2-ascension one', () => {
@@ -58,22 +58,78 @@ describe('defaultSeedChain', () => {
 });
 
 describe('seedChainIssue', () => {
+  const PROBE = { countProbe: true };
+  const NO_PROBE = { countProbe: false };
+
   it('passes a chain inside the limits', () => {
-    expect(seedChainIssue([180, 220, 270, 320, 490], 5, 8)).toBeNull();
+    expect(seedChainIssue([180, 220, 270, 320, 490], 5, 8, PROBE)).toBeNull();
+    expect(seedChainIssue([180, 220, 270, 320, 490], 5, 8, NO_PROBE)).toBeNull();
   });
 
-  it('allows one short or one long, since the count probe can add or drop one', () => {
-    expect(seedChainIssue([220, 270, 320, 490], 5, 8)).toBeNull();
-    expect(seedChainIssue([180, 200, 230, 260, 290, 320, 350, 400, 490], 5, 8)).toBeNull();
+  it('flags a 5-ascension seed under a maximum of 4 when no probe will run', () => {
+    // The reported case, on Balanced: `199 222 252 291 490` with "most ascensions" set to 4.
+    // Stages 4-6 all run on the seed at its own length, and Balanced has no prestige-count probe,
+    // so nothing in the whole run would have brought it back to 4.
+    expect(seedChainIssue([199, 222, 252, 291, 490], 2, 4, NO_PROBE)).toEqual({
+      kind: 'too-long',
+      ascensions: 5,
+      maxPrestiges: 4,
+      probeCanFix: false,
+    });
+  });
+
+  it('marks the same seed as probe-fixable on a tier that runs the probe', () => {
+    expect(seedChainIssue([199, 222, 252, 291, 490], 2, 4, PROBE)).toEqual({
+      kind: 'too-long',
+      ascensions: 5,
+      maxPrestiges: 4,
+      probeCanFix: true,
+    });
+  });
+
+  it('never calls a two-step gap probe-fixable', () => {
+    expect(seedChainIssue([170, 195, 220, 250, 280, 320, 490], 2, 4, PROBE)).toEqual({
+      kind: 'too-long',
+      ascensions: 7,
+      maxPrestiges: 4,
+      probeCanFix: false,
+    });
   });
 
   it('flags a chain the search cannot grow into range', () => {
-    expect(seedChainIssue([135, 490], 5, 8)).toEqual({ kind: 'too-short', ascensions: 2, minPrestiges: 5 });
+    expect(seedChainIssue([135, 490], 5, 8, NO_PROBE)).toEqual({
+      kind: 'too-short',
+      ascensions: 2,
+      minPrestiges: 5,
+      probeCanFix: false,
+    });
+  });
+});
+
+describe('fitSeedToLimits', () => {
+  it('trims a 5-ascension chain to the configured maximum of 4', () => {
+    const fitted = fitSeedToLimits([199, 222, 252, 291, 490], 2, 4);
+    expect(fitted).toHaveLength(4);
+    expect(fitted[0]).toBe(199);
+    expect(fitted[fitted.length - 1]).toBe(490);
   });
 
-  it('flags a chain longer than the probe can trim', () => {
-    const long = [170, 190, 210, 230, 250, 270, 290, 310, 330, 490];
-    expect(seedChainIssue(long, 5, 8)).toEqual({ kind: 'too-long', ascensions: 10, maxPrestiges: 8 });
+  it('keeps the chain strictly increasing while trimming', () => {
+    const fitted = fitSeedToLimits([199, 222, 252, 291, 320, 360, 490], 2, 4);
+    expect(fitted).toHaveLength(4);
+    for (let i = 1; i < fitted.length; i++) expect(fitted[i]).toBeGreaterThan(fitted[i - 1]);
+  });
+
+  it('pads a short chain up to the configured minimum', () => {
+    const fitted = fitSeedToLimits([250, 490], 5, 8);
+    expect(fitted).toHaveLength(5);
+    for (let i = 1; i < fitted.length; i++) expect(fitted[i]).toBeGreaterThan(fitted[i - 1]);
+    expect(fitted[fitted.length - 1]).toBe(490);
+  });
+
+  it('leaves a chain already inside the limits untouched', () => {
+    const chain = [195, 226, 277, 317, 490];
+    expect(fitSeedToLimits(chain, 5, 8)).toEqual(chain);
   });
 });
 

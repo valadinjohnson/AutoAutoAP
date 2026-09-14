@@ -190,3 +190,13 @@ export interface SearchProgress {
 
 /** Per-egg TE map, as the summaries carry it. */
 export type TEByEgg = Record<VirtueEgg, number>;
+
+/** One priced chain, flattened for the shape chart. Built in the store from the driver's cache. */
+export interface PricedChain {
+  chain: number[];
+  days: number;
+  /** Chain length including the final target: one ascension each. */
+  prestiges: number;
+  /** The checkpoint before the final target, which is the axis the sawtooth is visible against. */
+  lastCheckpoint: number;
+}

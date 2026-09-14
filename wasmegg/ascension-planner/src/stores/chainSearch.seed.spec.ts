@@ -76,9 +76,43 @@ describe('chainSearch: seedChain', () => {
     const store = setup({ targetTE: '250' });
     store.minPrestiges = 5;
     store.maxPrestiges = 8;
+    store.effort = 'balanced';
 
     expect(store.seedChain).toEqual([250, 490]);
-    expect(store.seedIssue).toEqual({ kind: 'too-short', ascensions: 2, minPrestiges: 5 });
+    expect(store.seedIssue).toEqual({ kind: 'too-short', ascensions: 2, minPrestiges: 5, probeCanFix: false });
+  });
+
+  it('flags a chain longer than the maximum on a tier with no prestige-count probe', () => {
+    // The reported case: `199 222 252 291 490` under a maximum of 4, on Balanced. The limits only
+    // reach the coarse scan and the probe, and Balanced runs neither, so every stage would have
+    // worked on a 5-ascension chain and returned one.
+    const store = setup({ targetTE: '199 222 252 291' });
+    store.minPrestiges = 2;
+    store.maxPrestiges = 4;
+    store.effort = 'balanced';
+
+    expect(store.seedChain).toEqual([199, 222, 252, 291, 490]);
+    expect(store.seedIssue).toEqual({ kind: 'too-long', ascensions: 5, maxPrestiges: 4, probeCanFix: false });
+  });
+
+  it('marks the same chain as probe-fixable on a tier that runs the probe', () => {
+    const store = setup({ targetTE: '199 222 252 291' });
+    store.minPrestiges = 2;
+    store.maxPrestiges = 4;
+    store.effort = 'normal';
+
+    expect(store.seedIssue).toEqual({ kind: 'too-long', ascensions: 5, maxPrestiges: 4, probeCanFix: true });
+  });
+
+  it('fits the seed to the limits on request', () => {
+    const store = setup({ targetTE: '199 222 252 291' });
+    store.minPrestiges = 2;
+    store.maxPrestiges = 4;
+    store.effort = 'balanced';
+
+    store.fitSeedToLimitsNow();
+    expect(store.seedChain).toHaveLength(4);
+    expect(store.seedIssue).toBeNull();
   });
 
   it('raises no issue when the coarse scan is picking the seed', () => {

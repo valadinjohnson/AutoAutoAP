@@ -80,23 +80,95 @@ export function defaultSeedChain({ currentTE, finalTE, minPrestiges, maxPrestige
 }
 
 export type SeedIssue =
-  | { kind: 'too-short'; ascensions: number; minPrestiges: number }
-  | { kind: 'too-long'; ascensions: number; maxPrestiges: number };
+  | { kind: 'too-short'; ascensions: number; minPrestiges: number; probeCanFix: boolean }
+  | { kind: 'too-long'; ascensions: number; maxPrestiges: number; probeCanFix: boolean };
 
 /**
- * What is wrong with a seed, for the panel to say before three hours are spent finding out.
+ * Why the current seed cannot produce an answer inside the Limits box, or null when it can.
  *
- * Only reports what the search genuinely cannot fix. A seed inside the limits needs no comment,
- * and one outside them is not an error the run recovers from: the answer it returns will have the
- * seed's ascension count give or take one, whatever the Limits box says.
+ * THE LIMITS ARE NOT A CAP ON THE SEED. `minCheckpoints`/`maxCheckpoints` reach the driver, but
+ * they only gate the prestige-count probe (stage 7) and the coarse scan. Stages 4, 4a, 5 and 6 all
+ * run on the seed at whatever length it arrives, so a 5-ascension seed under a maximum of 4 is
+ * explored as a 5 and comes back as a 5.
+ *
+ * `countProbe` is therefore load-bearing: on Quick and Balanced the probe does not run at all, so
+ * nothing anywhere in the run will change the seed's length and the limits are decorative. On
+ * Normal and Thorough the probe can add or drop exactly one checkpoint, so a seed one outside the
+ * range can still land inside it, and reporting that as broken would be wrong.
  */
-export function seedChainIssue(chain: number[], minPrestiges: number, maxPrestiges: number): SeedIssue | null {
+export function seedChainIssue(
+  chain: number[],
+  minPrestiges: number,
+  maxPrestiges: number,
+  opts: { countProbe: boolean }
+): SeedIssue | null {
   const ascensions = chain.length;
-  // The probe can add or drop one checkpoint, so a seed one short of the minimum can still land
-  // inside it. Anything further out cannot.
-  if (ascensions < minPrestiges - 1) return { kind: 'too-short', ascensions, minPrestiges };
-  if (ascensions > maxPrestiges + 1) return { kind: 'too-long', ascensions, maxPrestiges };
+  const slack = opts.countProbe ? 1 : 0;
+
+  if (ascensions < minPrestiges - slack) {
+    return { kind: 'too-short', ascensions, minPrestiges, probeCanFix: false };
+  }
+  if (ascensions > maxPrestiges + slack) {
+    return { kind: 'too-long', ascensions, maxPrestiges, probeCanFix: false };
+  }
+  // Inside the range once the probe's one step is counted, but only because of it. Worth saying:
+  // the probe is allowed to decline, so this is a "probably" rather than a guarantee.
+  if (slack && (ascensions < minPrestiges || ascensions > maxPrestiges)) {
+    return ascensions < minPrestiges
+      ? { kind: 'too-short', ascensions, minPrestiges, probeCanFix: true }
+      : { kind: 'too-long', ascensions, maxPrestiges, probeCanFix: true };
+  }
   return null;
+}
+
+/**
+ * The seed trimmed or padded to sit inside the limits, for the panel's one-click fix.
+ *
+ * Trimming drops interior checkpoints furthest from the ends first, which keeps the opening leg
+ * (usually the best-validated value, and the one `pin` protects) and the last checkpoint (the one
+ * every sweep re-solves anyway). Padding inserts midpoints into the widest gaps.
+ */
+export function fitSeedToLimits(chain: number[], minPrestiges: number, maxPrestiges: number): number[] {
+  if (chain.length < 2) return chain;
+  const final = chain[chain.length - 1];
+  let interior = chain.slice(0, -1);
+
+  const maxInterior = Math.max(1, Math.floor(maxPrestiges) - 1);
+  while (interior.length > maxInterior && interior.length > 1) {
+    // Drop the checkpoint whose removal leaves the most even spacing, which is the one currently
+    // closest to its neighbours.
+    let dropAt = 1;
+    let smallestSpan = Infinity;
+    for (let i = 1; i < interior.length - 1; i++) {
+      const span = interior[i + 1] - interior[i - 1];
+      if (span < smallestSpan) {
+        smallestSpan = span;
+        dropAt = i;
+      }
+    }
+    if (interior.length === 2) dropAt = 1;
+    interior = [...interior.slice(0, dropAt), ...interior.slice(dropAt + 1)];
+  }
+
+  const minInterior = Math.max(1, Math.floor(minPrestiges) - 1);
+  let guard = 0;
+  while (interior.length < minInterior && guard++ < 32) {
+    let gapAt = 0;
+    let widest = -Infinity;
+    const points = [...interior, final];
+    for (let i = 0; i < points.length - 1; i++) {
+      const gap = points[i + 1] - points[i];
+      if (gap > widest) {
+        widest = gap;
+        gapAt = i;
+      }
+    }
+    const inserted = Math.floor((points[gapAt] + points[gapAt + 1]) / 2);
+    if (inserted <= points[gapAt] || inserted >= points[gapAt + 1]) break;
+    interior = [...interior.slice(0, gapAt + 1), inserted, ...interior.slice(gapAt + 1)];
+  }
+
+  return [...interior, final];
 }
 
 /**

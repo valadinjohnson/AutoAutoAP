@@ -600,26 +600,68 @@
         </div>
       </div>
 
-      <!-- A seed outside the Limits box is not something the run recovers from: descent only moves
-           checkpoints and the probe adds at most one, so the answer comes back with the seed's
-           ascension count give or take one. Say so here rather than at the end of the run. -->
+      <!-- The Limits box only reaches the coarse scan and the prestige-count probe, so on Quick and
+           Balanced a seed of the wrong length is simply the length the answer comes back as. Say so
+           here, with the one-click fix, rather than at the end of a three-hour run. -->
       <div
         v-if="store.seedIssue"
-        class="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 leading-relaxed space-y-1.5"
+        class="p-4 rounded-xl border text-xs leading-relaxed space-y-2"
+        :class="
+          store.seedIssue.probeCanFix
+            ? 'bg-amber-50 border-amber-200 text-amber-900'
+            : 'bg-red-50 border-red-200 text-red-900'
+        "
       >
-        <p class="font-bold uppercase tracking-wide text-amber-700">This chain cannot reach your limits</p>
-        <p v-if="store.seedIssue.kind === 'too-short'">
-          The starting chain has {{ store.seedIssue.ascensions }} ascensions and you have asked for at least
-          {{ store.seedIssue.minPrestiges }}. The search moves checkpoints and can add one, so it will come back with
-          about {{ store.seedIssue.ascensions + 1 }}. Add checkpoints to the starting chain, lower "fewest ascensions",
-          or tick "find a starting chain for me" and let the coarse scan pick one.
+        <p
+          class="font-bold uppercase tracking-wide"
+          :class="store.seedIssue.probeCanFix ? 'text-amber-700' : 'text-red-700'"
+        >
+          {{
+            store.seedIssue.probeCanFix
+              ? 'This chain may not match your limits'
+              : 'This chain does not match your limits'
+          }}
+        </p>
+
+        <p v-if="store.seedIssue.kind === 'too-long'">
+          The starting chain has <span class="font-semibold">{{ store.seedIssue.ascensions }} ascensions</span> and
+          "most ascensions" is set to <span class="font-semibold">{{ store.seedIssue.maxPrestiges }}</span
+          >.
         </p>
         <p v-else>
-          The starting chain has {{ store.seedIssue.ascensions }} ascensions and you have capped it at
-          {{ store.seedIssue.maxPrestiges }}. The search can drop one checkpoint, not
-          {{ store.seedIssue.ascensions - store.seedIssue.maxPrestiges }}. Shorten the starting chain or raise "most
-          ascensions".
+          The starting chain has <span class="font-semibold">{{ store.seedIssue.ascensions }} ascensions</span> and
+          "fewest ascensions" is set to <span class="font-semibold">{{ store.seedIssue.minPrestiges }}</span
+          >.
         </p>
+
+        <p v-if="store.seedIssue.probeCanFix">
+          The prestige-count probe runs on this effort tier and can move the count by one, so it may land inside your
+          limits. It is allowed to decline, so this is not a guarantee.
+        </p>
+        <p v-else>
+          The limits only bound the coarse scan and the prestige-count probe, and
+          <span class="font-semibold">this effort tier does not run the probe</span>. Every stage works on the chain at
+          the length you gave it, so the answer will come back with {{ store.seedIssue.ascensions }} ascensions.
+        </p>
+
+        <div class="flex flex-wrap gap-2 pt-1">
+          <button
+            type="button"
+            :disabled="store.isRunning"
+            class="px-3 py-1.5 rounded-lg bg-white border text-[10px] font-black uppercase tracking-widest disabled:opacity-40"
+            :class="
+              store.seedIssue.probeCanFix
+                ? 'border-amber-300 text-amber-800 hover:border-amber-400'
+                : 'border-red-300 text-red-800 hover:border-red-400'
+            "
+            @click="store.fitSeedToLimitsNow()"
+          >
+            Fit chain to limits
+          </button>
+          <span class="text-[11px] self-center opacity-80">
+            or change the limits above, or tick "find a starting chain for me".
+          </span>
+        </div>
       </div>
 
       <!-- Run / stop -->
@@ -1319,6 +1361,39 @@
         </p>
       </div>
 
+      <!-- The run's own shape, and why it ended. The CSV had all of this already, but reading it
+           meant finishing a three-hour run and opening a spreadsheet. -->
+      <div v-if="store.pricedChains.length" class="p-4 rounded-xl border border-slate-200 bg-white space-y-4">
+        <div class="flex items-center justify-between gap-3">
+          <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">The shape of this search</h3>
+          <button
+            type="button"
+            class="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600"
+            @click="shapeOpen = !shapeOpen"
+          >
+            {{ shapeOpen ? 'Hide' : 'Show' }}
+          </button>
+        </div>
+
+        <div v-if="shapeOpen" class="space-y-4">
+          <!-- Why it ended, stated before the chart, because it changes how the chart reads: a run
+               that stopped early has a right-hand edge that means nothing. -->
+          <div
+            class="rounded-lg border p-3 text-[11px] leading-relaxed"
+            :class="
+              runOutcome.tone === 'good'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                : 'border-amber-200 bg-amber-50 text-amber-900'
+            "
+          >
+            <span class="font-bold uppercase tracking-wide">{{ runOutcome.title }}</span>
+            &mdash; {{ runOutcome.detail }}
+          </div>
+
+          <SearchShapeChart :points="store.pricedChains" :best-chain="store.bestChain" />
+        </div>
+      </div>
+
       <!-- Every chain the run priced, one row per leg. Safe to take mid-run. -->
       <div
         v-if="store.csvRows || store.resumable"
@@ -1374,6 +1449,7 @@ import { isAvailable } from '@/search/availability';
 import ChainSearchExplainer from './ChainSearchExplainer.vue';
 import HelpTip from './HelpTip.vue';
 import LoadoutDisplay from './LoadoutDisplay.vue';
+import SearchShapeChart from './charts/SearchShapeChart.vue';
 import type { EffortTier, LegSummary } from '@/search/types';
 import type { ShortlistRow } from '@/search/shortlist';
 import { VIEWS } from '@/search/views';
@@ -1384,6 +1460,50 @@ const store = useChainSearchStore();
 
 /** Open by default: a collapsed form on first load looks like the panel has nothing in it. */
 const settingsOpen = ref(true);
+
+/** Collapsed by default: it is a post-run read, and the chart is the heaviest thing on the page. */
+const shapeOpen = ref(true);
+
+/**
+ * Why the run ended, in one line. `stage` already carries this, but as an internal string
+ * ("done - every chain it needed was already priced") that assumes you know what the stages are.
+ */
+const runOutcome = computed<{ title: string; detail: string; tone: 'good' | 'warn' }>(() => {
+  if (store.isRunning) {
+    return {
+      title: 'Still running',
+      detail: `${store.stage}. The chart fills in as batches report, so the right-hand edge is wherever it has reached.`,
+      tone: 'warn',
+    };
+  }
+  if (store.error) {
+    return {
+      title: 'Stopped by an error',
+      detail: `${store.error} Everything priced before it stopped is on the chart and saved.`,
+      tone: 'warn',
+    };
+  }
+  if (store.stoppedEarly) {
+    return {
+      title: 'Stopped early',
+      detail: `You stopped it during "${store.lastCompletedStage}". The answer is the best of what was priced and is exactly what the completed stages guarantee, but the later stages never ran.`,
+      tone: 'warn',
+    };
+  }
+  if (store.chainsDone === 0) {
+    return {
+      title: 'Nothing left to price',
+      detail:
+        'Every chain this tier needed was already in the checkpoint from an earlier run, so it replayed them and stopped. Raise the effort tier to go further.',
+      tone: 'good',
+    };
+  }
+  return {
+    title: 'Finished',
+    detail: `Every stage in this tier ran to completion, ending on "${store.lastCompletedStage}". Descent stops when no checkpoint moves, so finishing short of the estimate is normal.`,
+    tone: 'good',
+  };
+});
 const autoPlannerStore = useAutoPlannerStore();
 
 // The slider is an index, not a tier name — `<input type="range">` only speaks numbers.
