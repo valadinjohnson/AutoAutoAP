@@ -450,11 +450,9 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
           </svg>
           <p class="text-xs text-indigo-900/80 leading-relaxed">
-            <span class="font-bold text-indigo-900">Everything is below this, so keep scrolling.</span>
-            <span class="font-semibold">Auto-AP</span> comes first: give it your start time, virtue eggs and target TEs,
-            and it builds the whole multi-ascension plan. <span class="font-semibold">Chain Search</span> sits under
-            that. It takes the chain you typed and spends hours of your CPU looking for a faster one, starting with the
-            maths for why that is hard.
+            <span class="font-bold text-indigo-900">The beta AAAP (Auto Auto Ascension Planner) is below AAP (Auto Ascension Planner), so keep scrolling.</span>
+            <span class="font-semibold">Chain Search</span> sits under
+            AAP. It takes the chain you typed and spends hours of your CPU looking for a faster one, if your computer catches on fire please call 0118 999 881 99 9119 725 3 (for leagal and serious reasons this is a joke.)
           </p>
         </div>
 
