@@ -45,3 +45,30 @@ export const DEBUG_SALE_AWARE_BUY = false;
  * chain's own offline preview.
  */
 export const DEBUG_MILESTONE_EXECUTION = false;
+
+/**
+ * Logs `getOptimalELRSet`'s artifact-structure cache (`lib/artifacts/virtue.ts`): hit/miss counts
+ * and a running estimate of wall time saved, printed every `ELR_STRUCTURE_LOG_EVERY` calls (see
+ * that constant in virtue.ts). Added while investigating the chain search's ~2.5s/leg cost: an
+ * unforced `getOptimalELRSet` call re-runs the up-to-495-combo artifact search from scratch, even
+ * though, per that function's own `forcedArtifacts` doc comment, which artifacts are worth
+ * equipping is driven only by owned inventory and target-artifact tiers, never by research levels
+ * (those only affect stone placement). So the winning structure is cacheable per (backup,
+ * assumeMaxHabsVehicles, excludeGusset), and every later call can skip straight to
+ * `forcedArtifacts`, roughly 500x cheaper per that same comment. Safe to leave on during a real
+ * profiling run; it only logs, it doesn't change which chains get evaluated.
+ */
+export const DEBUG_ELR_STRUCTURE_CACHE = false;
+
+/**
+ * Cross-checks the structure cache above against a full, uncached search on every Nth hit (see
+ * `ELR_STRUCTURE_VERIFY_EVERY` in virtue.ts) and warns if the resulting ELR differs by more than a
+ * tiny epsilon. This is the actual correctness test for the caching assumption above, run against
+ * your own backup and inventory rather than taken on faith: the assumption was written for one
+ * call's own candidates, within a single `rankResearchByELRImpact` invocation, and this flag
+ * checks whether it still holds stretched across a whole chain-search run, which spans very
+ * different research states from one ascension to the next. Turn this off for a real timed
+ * profiling run (the verification search defeats the speedup you're trying to measure) and on for
+ * a separate, shorter correctness check first.
+ */
+export const DEBUG_ELR_STRUCTURE_VERIFY = false;

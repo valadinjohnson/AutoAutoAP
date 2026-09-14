@@ -30,6 +30,88 @@ import { calculateHabCapacity_Full } from '@/calculations/habCapacity';
 import { getArtifact, getStone, artifactOptions } from './data';
 import { InventoryItem } from 'lib/artifacts';
 import { VehicleSlot } from '@/types';
+import { DEBUG_ELR_STRUCTURE_CACHE, DEBUG_ELR_STRUCTURE_VERIFY } from '@/lib/debugFlags';
+
+// ---------------------------------------------------------------------------------------------
+// Artifact-structure cache for getOptimalELRSet.
+//
+// Which artifacts are worth equipping depends only on owned inventory and target-artifact tiers,
+// neither of which a research purchase changes. Only stone placement depends on the current
+// research state, since that determines whether lay rate or shipping capacity is the bottleneck.
+// `forcedArtifacts` (see its doc comment on getOptimalELRSet below) already exploits this within
+// one call: `rankResearchByELRImpact` runs the up-to-495-combo structure search once as a
+// baseline, then forces every candidate and lookahead call onto that same structure. This cache
+// extends the same assumption across calls, for the lifetime of one `backup` object: since a
+// backup's artifact inventory doesn't change during a chain-search run, the winning structure for
+// a given (assumeMaxHabsVehicles, excludeGusset) pair only needs to be found once per run.
+//
+// The cache is a WeakMap keyed on the backup object itself, so a different backup is a miss by
+// construction and an old backup's entry is freed once nothing else references it. No hashing or
+// explicit invalidation involved. If something upstream ever clones `rawBackup` before it reaches
+// here (every call site currently threads the same `context.rawBackup` reference through, so this
+// doesn't appear to happen), the worst case is a permanent miss, not a stale hit.
+//
+// Only the structure (which artifact per slot) is cached. Stone placement is always re-solved
+// fresh by the recursive `forcedArtifacts` call below, the same way `rankResearchByELRImpact`'s
+// own per-candidate calls already do.
+//
+// The `forcedArtifacts` assumption above was written for candidates within one ascension's
+// research range. A chain-search run spans many ascensions and a much wider range of research
+// states, and this cache now holds the first structure computed for a given (assumeMax,
+// excludeGusset) pair for the rest of the run. `DEBUG_ELR_STRUCTURE_VERIFY` checks that
+// assumption. See its doc comment in lib/debugFlags.ts.
+/**
+ * Master on/off switch for the cache, separate from the DEBUG_ELR_STRUCTURE_* logging flags in
+ * debugFlags.ts, which only control whether it logs, not whether it runs. Flip this to `false`
+ * and rebuild for an apples-to-apples "before" timing without touching git or the rest of this
+ * file; flip back to `true` (the shipped default) for the "after" run. Every call falls through
+ * to the original uncached search when this is `false`.
+ */
+const STRUCTURE_CACHE_ENABLED = true;
+
+const structureCache = new WeakMap<ei.IBackup, Map<string, (string | null)[]>>();
+
+function structureCacheKey(assumeMax: boolean, excludeGusset: boolean): string {
+  return `${assumeMax ? 1 : 0}${excludeGusset ? 1 : 0}`;
+}
+
+/** Every `console.log`/`console.warn` below runs inside a Web Worker during a real search, same as
+ *  the existing DEBUG_SHIFT_TIMING etc. It's still visible in the browser's devtools Console panel. */
+const ELR_STRUCTURE_LOG_EVERY = 200;
+const ELR_STRUCTURE_VERIFY_EVERY = 25;
+
+const structureStats = {
+  hits: 0,
+  misses: 0,
+  /** Wall time spent inside every miss (the full combo search), in milliseconds. */
+  missMs: 0,
+  /** Wall time spent inside every hit (structure lookup plus one forced stone-solve), in ms. */
+  hitMs: 0,
+};
+
+/** Estimated wall time this run would have spent with the cache off, versus what it actually
+ *  spent: every hit is assumed to have cost the running average miss time, since that's what it
+ *  would have paid without the cache. Call from the devtools console mid-run or at the end. */
+export function logELRStructureCacheStats(): void {
+  const avgMiss = structureStats.misses ? structureStats.missMs / structureStats.misses : 0;
+  const withoutCacheMs = structureStats.missMs + structureStats.hits * avgMiss;
+  const withCacheMs = structureStats.missMs + structureStats.hitMs;
+  const savedMs = withoutCacheMs - withCacheMs;
+  const pct = withoutCacheMs > 0 ? (100 * savedMs) / withoutCacheMs : 0;
+  console.log(
+    `[getOptimalELRSet structure cache] ${structureStats.hits} hits, ${structureStats.misses} misses ` +
+      `(avg miss ${avgMiss.toFixed(2)}ms). Est. without cache: ${withoutCacheMs.toFixed(0)}ms, ` +
+      `with cache: ${withCacheMs.toFixed(0)}ms -> saved ~${savedMs.toFixed(0)}ms (${pct.toFixed(1)}%) ` +
+      `of this function's own time so far.`
+  );
+}
+
+export function resetELRStructureCacheStats(): void {
+  structureStats.hits = 0;
+  structureStats.misses = 0;
+  structureStats.missMs = 0;
+  structureStats.hitMs = 0;
+}
 
 /**
  * Get the optimal artifact set for earnings (Clothed TE).
@@ -127,6 +209,10 @@ export function getOptimalELRSet(
      * every combo's.
      */
     forcedArtifacts?: (string | null)[];
+    /** Internal/debug-only: skip the structure-cache lookup even though `forcedArtifacts` is
+     *  unset, forcing a genuine full search. Used only by `DEBUG_ELR_STRUCTURE_VERIFY`'s own
+     *  comparison call; don't set this from ordinary calling code. */
+    bypassStructureCache?: boolean;
   } = {}
 ): EquippedArtifact[] {
   if (!backup.artifactsDb) {
@@ -135,6 +221,52 @@ export function getOptimalELRSet(
 
   const assumeMax = options.assumeMaxHabsVehicles ?? false;
   const excludeGusset = options.excludeGusset ?? false;
+
+  // Structure cache: an unforced call whose (backup, assumeMax, excludeGusset) triple has already
+  // been solved skips straight to the cheap forcedArtifacts path instead of repeating the
+  // up-to-495-combo search. See the module-level doc comment on `structureCache` above for why
+  // this is safe and what it does not cover.
+  if (STRUCTURE_CACHE_ENABLED && !options.forcedArtifacts && !options.bypassStructureCache) {
+    const perBackup = structureCache.get(backup);
+    const cached = perBackup?.get(structureCacheKey(assumeMax, excludeGusset));
+    if (cached) {
+      const t0 = DEBUG_ELR_STRUCTURE_CACHE || DEBUG_ELR_STRUCTURE_VERIFY ? performance.now() : 0;
+      const result = getOptimalELRSet(backup, { ...options, forcedArtifacts: cached });
+      if (DEBUG_ELR_STRUCTURE_CACHE) {
+        structureStats.hits++;
+        structureStats.hitMs += performance.now() - t0;
+        if (structureStats.hits % ELR_STRUCTURE_LOG_EVERY === 0) logELRStructureCacheStats();
+      }
+      if (DEBUG_ELR_STRUCTURE_VERIFY && structureStats.hits % ELR_STRUCTURE_VERIFY_EVERY === 0) {
+        // Force a genuine full search purely to compare. `bypassStructureCache` is the only way to
+        // get one here without `forcedArtifacts`, since the cache under test would otherwise just
+        // answer its own question.
+        const fresh = getOptimalELRSet(backup, { ...options, forcedArtifacts: undefined, bypassStructureCache: true });
+        const cachedMods = calculateArtifactModifiers(result);
+        const freshMods = calculateArtifactModifiers(fresh);
+        // Compare the eggLayingRate and shippingRate multipliers the two structures deliver, as a
+        // cheap proxy for whether the cached structure still holds up. Anything past floating-point
+        // noise means the cached structure isn't actually optimal for this research state, and the
+        // cross-ascension caching assumption doesn't hold on this account.
+        const drift = (a: number, b: number) => Math.abs(a - b) > 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+        if (
+          drift(cachedMods.eggLayingRate.totalMultiplier, freshMods.eggLayingRate.totalMultiplier) ||
+          drift(cachedMods.shippingRate.totalMultiplier, freshMods.shippingRate.totalMultiplier)
+        ) {
+          console.warn(
+            '[getOptimalELRSet structure cache] MISMATCH: the cached structure ' +
+              `${JSON.stringify(cached)} no longer matches a fresh search's ` +
+              `${JSON.stringify(fresh.map(s => s.artifactId))} for assumeMax=${assumeMax} ` +
+              `excludeGusset=${excludeGusset}. The cross-ascension caching assumption does not ` +
+              'hold on this account — do not trust the cached speedup without investigating.'
+          );
+        }
+      }
+      return result;
+    }
+  }
+
+  const t0Miss = DEBUG_ELR_STRUCTURE_CACHE && !options.forcedArtifacts ? performance.now() : 0;
   const inventory = new Inventory(backup.artifactsDb, { virtue: true });
   const colleggtibles = options.colleggtibleModifiers ?? allModifiersFromColleggtibles(backup);
 
@@ -162,7 +294,7 @@ export function getOptimalELRSet(
   if (options.forcedArtifacts) {
     const forcedLoadout: EquippedArtifact[] = options.forcedArtifacts.map(artifactId => ({
       artifactId,
-      stones: new Array(artifactId ? getArtifact(artifactId)?.slots ?? 0 : 0).fill(null),
+      stones: new Array(artifactId ? (getArtifact(artifactId)?.slots ?? 0) : 0).fill(null),
     }));
     while (forcedLoadout.length < 4) forcedLoadout.push({ artifactId: null, stones: [] });
     candidateLoadouts = [forcedLoadout];
@@ -464,6 +596,27 @@ export function getOptimalELRSet(
       }
       bestSet = optimizedLoadout;
       bestMetrics = bestMetricsForThisLoadout;
+    }
+  }
+
+  // This was a genuine structure search (not a forced single-structure re-solve): remember the
+  // winner so the next unforced call for this (backup, assumeMax, excludeGusset) triple can skip
+  // straight to it. See the module-level doc comment on `structureCache` above.
+  if (!options.forcedArtifacts) {
+    if (DEBUG_ELR_STRUCTURE_CACHE) {
+      structureStats.misses++;
+      structureStats.missMs += performance.now() - t0Miss;
+    }
+    if (STRUCTURE_CACHE_ENABLED) {
+      let perBackup = structureCache.get(backup);
+      if (!perBackup) {
+        perBackup = new Map();
+        structureCache.set(backup, perBackup);
+      }
+      perBackup.set(
+        structureCacheKey(assumeMax, excludeGusset),
+        bestSet.map(slot => slot.artifactId)
+      );
     }
   }
 
