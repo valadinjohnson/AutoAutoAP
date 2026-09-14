@@ -4,13 +4,46 @@ import { hashID, saveMetadata, loadMetadata } from '@/lib/storage/db';
 import { exportPlanData } from '@/stores/actions/io';
 
 const SYNC_CHANNEL_NAME = 'ascension_sync';
-const channel = new BroadcastChannel(SYNC_CHANNEL_NAME);
 const partitionHash = ref('');
 const isSyncing = ref(false);
 
-// Generate a unique session ID for this tab that persists through refreshes
-const sessionId = sessionStorage.getItem('ascension_session_id') || Math.random().toString(36).substring(2, 15);
-sessionStorage.setItem('ascension_session_id', sessionId);
+/**
+ * `BroadcastChannel` and `sessionStorage` are resolved on first use, not at import.
+ *
+ * Both used to be evaluated at module scope, which made this module impossible to import outside a
+ * browser. That is not only a test concern, though it showed up as one first: this file sits in
+ * the import graph of `useAscensionGenerator`, so every spec that reached that graph failed to
+ * collect under vitest's `node` environment, and the whole file's tests were lost rather than a
+ * single case failing. The same would happen in a web worker or any pre-render.
+ *
+ * Both accessors degrade instead of throwing. Cross-tab sync is a convenience; a context without
+ * these globals has no other tabs to sync with, so doing nothing is the correct behaviour there.
+ */
+let channelInstance: BroadcastChannel | null = null;
+function getChannel(): BroadcastChannel | null {
+  if (typeof BroadcastChannel === 'undefined') return null;
+  if (!channelInstance) channelInstance = new BroadcastChannel(SYNC_CHANNEL_NAME);
+  return channelInstance;
+}
+
+let sessionIdValue = '';
+function getSessionId(): string {
+  if (sessionIdValue) return sessionIdValue;
+  const generated = Math.random().toString(36).substring(2, 15);
+  try {
+    const stored = sessionStorage.getItem('ascension_session_id');
+    if (stored) {
+      sessionIdValue = stored;
+      return sessionIdValue;
+    }
+    sessionStorage.setItem('ascension_session_id', generated);
+  } catch {
+    // Private mode, blocked storage, or no DOM at all. An in-memory id is still unique for this
+    // page's lifetime, which is all the draft key below actually needs.
+  }
+  sessionIdValue = generated;
+  return sessionIdValue;
+}
 
 let lastSyncedDataStr = '';
 let channelListenerAttached = false;
@@ -41,7 +74,7 @@ function broadcastPresence(planIdOverride?: string | null) {
   const planId = planIdOverride !== undefined ? planIdOverride : actionsStore.activePlanId;
 
   if (planId && partitionHash.value) {
-    channel.postMessage({
+    getChannel()?.postMessage({
       type: 'PLAN_HEARTBEAT',
       planId,
       partitionHash: partitionHash.value,
@@ -75,7 +108,7 @@ const handleMessage = (event: MessageEvent) => {
 async function loadActiveDraft() {
   if (!partitionHash.value) return;
 
-  const draft = await loadMetadata(partitionHash.value, `active_draft_${sessionId}`);
+  const draft = await loadMetadata(partitionHash.value, `active_draft_${getSessionId()}`);
   if (draft) {
     isSyncing.value = true;
     try {
@@ -98,7 +131,7 @@ export function usePersistence() {
   }
 
   function broadcastLibraryUpdate() {
-    channel.postMessage({
+    getChannel()?.postMessage({
       type: 'LIBRARY_UPDATED',
       partitionHash: partitionHash.value,
       timestamp: Date.now(),
@@ -117,7 +150,7 @@ export function usePersistence() {
     if (newDataStr === lastSyncedDataStr) return;
 
     lastSyncedDataStr = newDataStr;
-    await saveMetadata(partitionHash.value, `active_draft_${sessionId}`, planData);
+    await saveMetadata(partitionHash.value, `active_draft_${getSessionId()}`, planData);
   }
 
   /**
@@ -125,14 +158,14 @@ export function usePersistence() {
    */
   function queryOtherTabs() {
     if (partitionHash.value) {
-      channel.postMessage({ type: 'PLAN_QUERY', partitionHash: partitionHash.value });
+      getChannel()?.postMessage({ type: 'PLAN_QUERY', partitionHash: partitionHash.value });
     }
   }
 
   onMounted(() => {
     // Attach the centralized message handler once
     if (!channelListenerAttached) {
-      channel.addEventListener('message', handleMessage);
+      getChannel()?.addEventListener('message', handleMessage);
       channelListenerAttached = true;
     }
 
@@ -152,6 +185,6 @@ export function usePersistence() {
     queryOtherTabs,
     busyPlanIds,
     partitionHash,
-    sessionId,
+    sessionId: getSessionId(),
   };
 }

@@ -45,6 +45,7 @@ import { buildView, type ViewId } from '@/search/views';
 import { buildSubmission, scrubIdentifiers, submissionFilename, type Submission } from '@/search/submission';
 import { describeAvailability, isConstrained, type Availability } from '@/search/availability';
 import { missedMilestones, usableMilestones, type Milestone } from '@/search/milestones';
+import { defaultSeedChain, seedChainIssue, usableCheckpoints } from '@/search/seedChain';
 import {
   getArtifactLoadoutFromBackup,
   getOptimalEarningsSet,
@@ -354,9 +355,27 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       .split(/\s+/)
       .map(Number)
       .filter(n => Number.isFinite(n) && n > 0);
-    const chain = raw.filter(v => v < finalTE.value);
-    return [...chain, finalTE.value];
+    // A checkpoint at or below current TE is not an ascension anyone can perform, and asking the
+    // simulator to reach a target already behind it is what produced the bare "Chain search worker
+    // error": the seed box happily held "135" on a 159 TE account.
+    const chain = usableCheckpoints(raw, currentTE.value, finalTE.value);
+    if (chain.length) return [...chain, finalTE.value];
+
+    // Nothing usable typed. Do NOT fall through to a bare `[finalTE]`: that is a one-ascension
+    // chain, descent only moves checkpoints, and the count probe adds at most one, so the Limits
+    // box asking for 5-8 could never be satisfied from it. Build a chain of the right length.
+    return defaultSeedChain({
+      currentTE: currentTE.value,
+      finalTE: finalTE.value,
+      minPrestiges: minPrestiges.value,
+      maxPrestiges: maxPrestiges.value,
+    });
   });
+
+  /** Why the current seed cannot produce an answer inside the Limits box, or null when it can. */
+  const seedIssue = computed(() =>
+    findSeedFirst.value ? null : seedChainIssue(seedChain.value, minPrestiges.value, maxPrestiges.value)
+  );
 
   /** Chains the coarse scan will price, or 0 when it is not going to run. */
   const coarseChains = computed(() => {
@@ -1027,6 +1046,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     planStartIsNow,
     finishedCleanly,
     seedChain,
+    seedIssue,
     seedOverride,
     estimateForCurrentSettings,
     findSeedFirst,

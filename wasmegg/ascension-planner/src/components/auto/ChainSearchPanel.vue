@@ -600,11 +600,33 @@
         </div>
       </div>
 
+      <!-- A seed outside the Limits box is not something the run recovers from: descent only moves
+           checkpoints and the probe adds at most one, so the answer comes back with the seed's
+           ascension count give or take one. Say so here rather than at the end of the run. -->
+      <div
+        v-if="store.seedIssue"
+        class="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 leading-relaxed space-y-1.5"
+      >
+        <p class="font-bold uppercase tracking-wide text-amber-700">This chain cannot reach your limits</p>
+        <p v-if="store.seedIssue.kind === 'too-short'">
+          The starting chain has {{ store.seedIssue.ascensions }} ascensions and you have asked for at least
+          {{ store.seedIssue.minPrestiges }}. The search moves checkpoints and can add one, so it will come back with
+          about {{ store.seedIssue.ascensions + 1 }}. Add checkpoints to the starting chain, lower "fewest ascensions",
+          or tick "find a starting chain for me" and let the coarse scan pick one.
+        </p>
+        <p v-else>
+          The starting chain has {{ store.seedIssue.ascensions }} ascensions and you have capped it at
+          {{ store.seedIssue.maxPrestiges }}. The search can drop one checkpoint, not
+          {{ store.seedIssue.ascensions - store.seedIssue.maxPrestiges }}. Shorten the starting chain or raise "most
+          ascensions".
+        </p>
+      </div>
+
       <!-- Run / stop -->
       <div class="flex gap-3">
         <button
           class="btn-premium btn-primary flex-1 py-4 text-sm shadow-xl shadow-emerald-500/20 active:scale-[0.98]"
-          :disabled="store.isRunning || store.seedChain.length < 2"
+          :disabled="store.isRunning || (!store.findSeedFirst && store.seedChain.length < 2)"
           @click="run(false)"
         >
           {{ store.isRunning ? 'Searching...' : 'Start search' }}
@@ -1103,11 +1125,22 @@
         </p>
       </div>
 
+      <!-- A failure is not necessarily a total loss: anything already priced is on the checkpoint
+           and a rerun replays it for free. Saying so is the difference between "start again" and
+           "press Start search again and keep your three hours". -->
       <div
         v-if="store.error"
-        class="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 leading-relaxed"
+        class="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 leading-relaxed space-y-1.5"
       >
-        <span class="font-bold uppercase tracking-wide">Search failed</span> — {{ store.error }}
+        <p><span class="font-bold uppercase tracking-wide">Search failed</span> — {{ store.error }}</p>
+        <p v-if="store.chainsDone > 0" class="text-red-700">
+          {{ store.chainsDone }} chains were priced before it stopped and are saved. Starting the search again replays
+          them without re-simulating anything, so you are resuming rather than restarting.
+        </p>
+        <p v-else class="text-red-700">
+          Nothing was priced, so there is nothing to resume. If this repeats, lower the effort tier to see whether a
+          shorter run gets through, and check the browser console for the worker's own error.
+        </p>
       </div>
 
       <!-- Verbose view: every stage and every accepted move, in order. The panel shows only the

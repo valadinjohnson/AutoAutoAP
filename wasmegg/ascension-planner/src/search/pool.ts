@@ -167,7 +167,21 @@ export async function createChainSearchPool(inputs: SearchInputs, opts: PoolOpti
     // for the rest of the afternoon. A worker that dies WITHOUT firing this is what the watchdog
     // is for.
     worker.onerror = (event: ErrorEvent) => {
-      const err = new Error(event.message || 'Chain search worker error');
+      // `event.message` is empty for anything the browser treats as cross-origin, which includes
+      // most module-load failures, so the bare fallback reached the user as "Chain search worker
+      // error" with nothing to act on. Carry whatever the event does have, and say what that
+      // usually means: a worker that fails at load fails for every request, immediately, whereas
+      // a crash mid-run leaves a partial result worth keeping.
+      const detail = [event.message, event.filename && `${event.filename}:${event.lineno ?? '?'}`]
+        .filter(Boolean)
+        .join(' at ');
+      const err = new Error(
+        detail
+          ? `A search worker crashed: ${detail}`
+          : 'A search worker stopped without reporting why. This is usually the browser reclaiming ' +
+              'memory from a background tab; keeping the tab visible, or lowering the effort tier, ' +
+              'gives a run its best chance of finishing.'
+      );
       for (const entry of pw.pending.values()) entry.reject(err);
       pw.pending.clear();
     };
@@ -298,10 +312,7 @@ export async function createChainSearchPool(inputs: SearchInputs, opts: PoolOpti
       return suspendedSeconds;
     },
 
-    async evaluate(
-      chains: number[][],
-      onChainDone?: (done: number, total: number) => void
-    ): Promise<BatchOutcome> {
+    async evaluate(chains: number[][], onChainDone?: (done: number, total: number) => void): Promise<BatchOutcome> {
       if (!chains.length) return { results: [], legSims: 0, workersUsed: 0 };
 
       const sorted = sortChainsDepthFirst(chains);
@@ -324,12 +335,7 @@ export async function createChainSearchPool(inputs: SearchInputs, opts: PoolOpti
       try {
         const pws = await Promise.all(buckets.map((_, i) => workerAt(i)));
         const sends = buckets.map((bucket, i) =>
-          send(
-            pws[i],
-            { kind: 'evaluate', requestId: ++nextRequestId, chains: bucket },
-            `worker ${i}`,
-            bucket.length
-          )
+          send(pws[i], { kind: 'evaluate', requestId: ++nextRequestId, chains: bucket }, `worker ${i}`, bucket.length)
         );
         // Attach a no-op handler to each send BEFORE awaiting them together. `Promise.all` rejects
         // on the first failure and abandons its siblings; those siblings still reject later (the
