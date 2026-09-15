@@ -46,6 +46,7 @@ import { buildSubmission, scrubIdentifiers, submissionFilename, type Submission 
 import { describeAvailability, isConstrained, type Availability } from '@/search/availability';
 import { missedMilestones, usableMilestones, type Milestone } from '@/search/milestones';
 import { defaultSeedChain, seedChainIssue, usableCheckpoints, fitSeedToLimits } from '@/search/seedChain';
+import { buildPool, exhaustiveChains, sortByPrefix } from '@/search/exhaustive';
 import { summariseEpicResearch, summariseColleggtibles } from '@/search/progression';
 import { listRuns, saveRun, loadRun, deleteRun, defaultRunLabel, type RunSummary } from '@/search/runLibrary';
 import { epicResearchDefs } from '@/lib/epicResearch';
@@ -902,6 +903,135 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
    * that cache, the driver simply re-runs from the top: already-priced chains come back as cache
    * hits with no simulation, and the run continues from where it stopped.
    */
+  /**
+   * Price EVERY chain over a pool. No staged search, no descent, no pruning.
+   *
+   * The browser twin of the CLI's `--exhaustive`. The staged search returns a strong local optimum
+   * and says so; this returns the true optimum of the space it enumerates, because it prices all of
+   * it. It shares the enumeration with the CLI (`search/exhaustive.ts`) so the two cannot drift
+   * into covering different spaces.
+   *
+   * NO SAFETY CAP. The CLI refuses past 5,000 chains without `--yes`, which is right for a flag you
+   * can typo. This is a form that shows the count and the estimate as you type, on a page reached
+   * only by URL, so the guard would only ever be in the way of someone who already knows.
+   *
+   * Progress, cache, best-so-far and the stop button are the same state the staged search writes,
+   * so every results panel works unchanged.
+   */
+  async function startExhaustive(
+    playerId: string,
+    spec: { lo: number; hi: number; step: number; minAsc: number; maxAsc: number }
+  ): Promise<void> {
+    if (isRunning.value) return;
+
+    const poolValues = buildPool({ lo: spec.lo, hi: spec.hi, step: spec.step }, currentTE.value, finalTE.value);
+    if (!poolValues.length) {
+      error.value = `The pool is empty once values outside (${currentTE.value}, ${finalTE.value}) are dropped.`;
+      return;
+    }
+    const chains = sortByPrefix(exhaustiveChains(poolValues, spec.minAsc, spec.maxAsc, finalTE.value, currentTE.value));
+    if (!chains.length) {
+      error.value = 'No chains: the ascension range asks for more checkpoints than the pool can supply.';
+      return;
+    }
+
+    error.value = null;
+    stopRequested.value = false;
+    stoppedEarly.value = false;
+    isRunning.value = true;
+    startedAt.value = Date.now();
+    chainsDone.value = 0;
+    chainsReplayed.value = 0;
+    runLog.value = [`--- exhaustive: ${poolValues.length} pool values, ${spec.minAsc}-${spec.maxAsc} ascensions`];
+    runLog.value.push(`${chains.length.toLocaleString()} chains, no pruning`);
+    secondsPerChain.value = 0;
+    liveCache = [];
+    coarseCache = [];
+    csvRows.value = 0;
+    shortlist.value = [];
+    lastShortlistAt = 0;
+    batchDone.value = 0;
+    batchTotal.value = 0;
+    suspendedSeconds.value = 0;
+    runStartedAt.value = Date.now();
+    runEndedAt.value = 0;
+    lastRateAt = Date.now();
+    lastRateChains = 0;
+
+    planStartUsed.value = planStart.value;
+    chainsEstimated.value = chains.length;
+    bestChain.value = [];
+    bestDays.value = 0;
+    bestLegs.value = [];
+    stage.value = 'starting workers';
+    detail.value = '';
+
+    try {
+      partitionHash = await hashID(playerId);
+    } catch (e) {
+      console.warn('chain search: could not prepare storage', e);
+    }
+
+    try {
+      pool = await createChainSearchPool(collectInputs(), {
+        onSuspend: gap => {
+          suspendedSeconds.value += gap;
+          runLog.value.push(`--- the browser suspended this tab for ${Math.round(gap / 60)} minutes`);
+        },
+      });
+      workersInPool.value = pool.size;
+      stage.value = 'pricing every chain';
+
+      // Chunked so progress is visible and so the pool re-deals by prefix each time. Sorted above,
+      // which is what makes the evaluator's prefix memo pay: siblings land in the same chunk.
+      //
+      // DELIBERATELY SMALLER THAN THE CLI'S `jobs * 8`. The chunk is the unit of both the progress
+      // counter and the stop check, and at 19 workers `* 8` is 152 chains -- about two minutes
+      // during which the bar reads "0 / 6,006" and Stop does nothing. In a terminal that is a
+      // quiet stretch between printed lines; in a UI it looks broken. `* 2` keeps every worker fed
+      // (the pool splits a batch by prefix internally) while checking the stop flag four times as
+      // often, at the cost of a little prefix sharing across chunk boundaries.
+      const chunk = Math.max(pool.size * 2, 32);
+      for (let i = 0; i < chains.length && !stopRequested.value; i += chunk) {
+        const slice = chains.slice(i, i + chunk);
+        const { results } = await pool.evaluate(slice, noteBatch);
+        for (const r of results) liveCache.push({ key: r.chain.join(','), seconds: r.seconds, legs: r.legs });
+
+        chainsDone.value = Math.min(i + chunk, chains.length);
+        csvRows.value = liveCache.length;
+        noteRate(chainsDone.value);
+
+        let bestSeconds = Infinity;
+        let bestEntry: CacheEntry | null = null;
+        for (const e of liveCache) {
+          if (e.seconds > 0 && e.seconds < bestSeconds) {
+            bestSeconds = e.seconds;
+            bestEntry = e;
+          }
+        }
+        if (bestEntry) {
+          bestChain.value = bestEntry.key.split(',').map(Number);
+          bestDays.value = bestEntry.seconds / 86400;
+          bestLegs.value = bestEntry.legs;
+        }
+        detail.value = `${chainsDone.value.toLocaleString()} / ${chains.length.toLocaleString()}`;
+        refreshShortlist();
+      }
+
+      stoppedEarly.value = stopRequested.value;
+      stage.value = stopRequested.value ? 'stopped' : 'done';
+      refreshShortlist(true);
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+      stage.value = 'failed';
+    } finally {
+      runEndedAt.value = Date.now();
+      pool?.terminate();
+      pool = null;
+      isRunning.value = false;
+    }
+  }
+
   async function start(playerId: string, options: { resume?: boolean } = {}): Promise<void> {
     if (isRunning.value) return;
 
@@ -1235,6 +1365,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     setShortlistView,
     // actions
     start,
+    startExhaustive,
     stop,
     checkResumable,
     discardCheckpoint,

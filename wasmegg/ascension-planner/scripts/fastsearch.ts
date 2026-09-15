@@ -76,6 +76,7 @@ import { runChainSearch, type CacheEntry, type EvaluateBatch } from '@/search/dr
 import { findStartingChain } from '@/search/coarse';
 import { EFFORT, EFFORT_ORDER, estimateChains } from '@/search/effort';
 import { splitByPrefix, workersForBatch } from '@/search/batch';
+import { exhaustiveChains } from '@/search/exhaustive';
 import { buildChainsCsv, describeVirtueInventory } from '@/search/csv';
 import type { ChainResult, EffortTier, SearchInputs } from '@/search/types';
 import {
@@ -1017,19 +1018,8 @@ async function runWorker(inputs: SearchInputs): Promise<void> {
  * C(206,6) is 8.2e10 chains at ~15 s each -- so the count is printed before anything is
  * simulated and a large one needs --yes.
  */
-function exhaustiveChains(pool: number[], lo: number, hi: number, final: number, currentTE: number): number[][] {
-  const out: number[][] = [];
-  const walk = (i: number, acc: number[]) => {
-    if (acc.length >= lo - 1 && acc.length <= hi - 1 && acc.length) out.push([...acc, final]);
-    if (acc.length >= hi - 1) return;
-    for (let j = i; j < pool.length; j++) {
-      if (pool[j] >= final) break;
-      if (!acc.length ? pool[j] > currentTE : pool[j] > acc[acc.length - 1]) walk(j + 1, [...acc, pool[j]]);
-    }
-  };
-  walk(0, []);
-  return out;
-}
+// `exhaustiveChains` lives in src/search/exhaustive.ts, shared with the browser's Insane mode so
+// the two cannot drift into enumerating different spaces. Imported at the top of this file.
 
 /**
  * `--exhaustive`: price every strictly-increasing chain over a pool. No staged search, no

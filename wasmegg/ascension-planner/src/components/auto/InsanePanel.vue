@@ -1,18 +1,22 @@
 <!--
-  The unguarded control surface for the chain search. Reached only by URL (`?insane=1`), never
-  linked, because every knob on it can make a run worse and none of them are explained by the
-  defaults they override.
+  The exhaustive search, unguarded. Reached only by URL (`?insane=1`), never linked.
 
-  WHY IT IS NOT LINKED. The main panel's settings are the ones with measured accuracy figures
-  behind them. Everything added here is either a driver option that was deliberately left at its
-  default (`maxLast`, `pin`) or a limit that only bites in ways the main panel would have to
-  explain. Someone who typed this URL has gone looking; someone who clicked a tab has not.
+  WHAT MAKES IT DIFFERENT FROM THE MAIN PANEL. That one runs the staged search: coordinate descent
+  with slices, which returns a strong local optimum and says so. This prices EVERY chain over a
+  pool you describe, so its winner is the true optimum of that space. It is the only mode in this
+  project that can prove anything, and the only reason the README can say "rank 1 of 4913".
 
-  WHAT IT IS NOT. This is not the CLI. The command-line tool runs in Node with forked processes and
-  reads a backup from disk, so `--backup`, `--jobs`, `--shard`, `--save-backup` and `--exhaustive`
-  have no browser equivalent -- `--exhaustive` in particular enumerates a pool with no staged
-  search, which this app has never had a path for. The panel says so rather than offering fields
-  that quietly do nothing.
+  NO EFFORT TIER. Effort tiers are stop points in the staged search's stage list; exhaustive has no
+  stages. The knobs here are the ones that actually define the space: which checkpoint values to
+  choose from, how finely, and how many ascensions.
+
+  NO SAFETY CAP. The CLI refuses past 5,000 chains without `--yes`, which is right for a flag you
+  can typo into a terminal. Here the count and the wall-clock estimate update as you type, on a page
+  you had to know the URL for, so a cap would only ever block someone who already knew.
+
+  NO PRUNING TOGGLE, because there is nothing honest to put behind it. Pruning by prefix cost is
+  inadmissible -- a prefix that arrives later can arrive with a higher delivery rate and win overall
+  -- and when it was implemented and measured it cut 0 of 69 chains. Exhaustive means exhaustive.
 -->
 <template>
   <div class="section-premium p-4 sm:p-8 max-w-4xl mx-auto mt-6 relative overflow-hidden">
@@ -30,43 +34,29 @@
         <div>
           <h2 class="text-xl font-black text-slate-900 uppercase tracking-tight">Insane mode</h2>
           <p class="text-[10px] font-black text-rose-400 uppercase tracking-widest mt-0.5">
-            Every knob, no guard rails, URL only
+            Exhaustive search · no caps · URL only
           </p>
         </div>
       </div>
 
       <div class="p-4 rounded-xl border border-rose-200 bg-rose-50 text-xs text-rose-900 leading-relaxed space-y-2">
         <p>
-          These are the options the main panel leaves at their defaults on purpose. The accuracy figures quoted there
-          were measured with those defaults, so nothing on this page has a measured accuracy figure behind it. Anything
-          you change here, you are testing.
+          This prices <span class="font-bold">every</span> chain over the pool you describe. No descent, no stages, no
+          pruning, so the winner is the true optimum of that space rather than a local one. It is also the mode that
+          runs away from you fastest: the chain count is combinatorial in the pool size, so halving the step does not
+          double the work, it multiplies it.
         </p>
         <p>
-          The command-line tool is not this. <code class="font-mono-premium">--exhaustive</code>,
-          <code class="font-mono-premium">--backup</code>, <code class="font-mono-premium">--jobs</code> and
-          <code class="font-mono-premium">--shard</code> need Node and a filesystem, and have no browser equivalent.
-          What is here is everything the in-browser search can actually do.
+          Nothing here is capped and nothing asks you to confirm. The count and the estimate below update as you type;
+          they are what you should be reading before you press start.
         </p>
       </div>
 
-      <!-- The knobs. Grouped by what they change, not by which struct they live in. -->
+      <!-- The space. These numbers are the whole definition of the search. -->
       <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-5">
-        <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Search</h3>
+        <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">The space to search</h3>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <label class="space-y-1">
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Effort tier</span>
-            <select
-              v-model="store.effort"
-              :disabled="store.isRunning"
-              class="w-full rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
-            >
-              <option v-for="tier in EFFORT_ORDER" :key="tier" :value="tier">
-                {{ EFFORT_NOTES[tier].label }} ({{ tier }})
-              </option>
-            </select>
-          </label>
-
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <label class="space-y-1">
             <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Final target TE</span>
             <input
@@ -77,101 +67,142 @@
               class="w-full rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
             />
           </label>
+          <label class="space-y-1">
+            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Your TE now</span>
+            <input
+              :value="store.currentTE"
+              type="number"
+              disabled
+              class="w-full rounded-lg border-slate-200 bg-slate-50 text-sm font-bold text-slate-500"
+            />
+          </label>
+          <label class="space-y-1">
+            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Workers</span>
+            <input
+              :value="store.workersInPool"
+              type="number"
+              disabled
+              class="w-full rounded-lg border-slate-200 bg-slate-50 text-sm font-bold text-slate-500"
+            />
+          </label>
         </div>
 
-        <label class="space-y-1 block">
-          <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">
-            Starting chain (checkpoints before the target, space separated)
-          </span>
-          <input
-            v-model="store.seedOverride"
-            type="text"
-            :disabled="store.isRunning"
-            placeholder="e.g. 195 229 283"
-            class="w-full rounded-lg border-slate-300 text-sm font-mono-premium font-bold text-slate-800 disabled:opacity-50"
-          />
-          <span class="block text-[10px] text-slate-400">
-            Using <code class="font-mono-premium">{{ store.seedChain.join(' ') }}</code>
-          </span>
-        </label>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <label class="space-y-1">
+            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Checkpoints from</span>
+            <input
+              v-model.number="rangeLo"
+              type="number"
+              min="1"
+              :disabled="store.isRunning"
+              class="w-full rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
+            />
+          </label>
+          <label class="space-y-1">
+            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">to</span>
+            <input
+              v-model.number="rangeHi"
+              type="number"
+              min="1"
+              :disabled="store.isRunning"
+              class="w-full rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
+            />
+          </label>
+          <label class="space-y-1">
+            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">every N TE (step)</span>
+            <input
+              v-model.number="rangeStep"
+              type="number"
+              min="1"
+              :disabled="store.isRunning"
+              class="w-full rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
+            />
+          </label>
+        </div>
 
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <label class="space-y-1">
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Min ascensions</span>
+            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">
+              Fewest ascensions
+            </span>
             <input
-              v-model.number="store.minPrestiges"
+              v-model.number="minAsc"
               type="number"
-              min="1"
+              min="2"
               :disabled="store.isRunning"
               class="w-full rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
             />
           </label>
           <label class="space-y-1">
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Max ascensions</span>
+            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Most ascensions</span>
             <input
-              v-model.number="store.maxPrestiges"
+              v-model.number="maxAsc"
               type="number"
-              min="1"
+              min="2"
               :disabled="store.isRunning"
-              class="w-full rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
-            />
-          </label>
-          <label class="space-y-1">
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Lock first N</span>
-            <input
-              v-model.number="store.pin"
-              type="number"
-              min="0"
-              :disabled="store.isRunning"
-              class="w-full rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
-            />
-          </label>
-          <label class="space-y-1">
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest"
-              >Max last checkpoint</span
-            >
-            <input
-              v-model.number="maxLastInput"
-              type="number"
-              min="1"
-              :disabled="store.isRunning"
-              :placeholder="String(store.finalTE - 150)"
               class="w-full rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
             />
           </label>
         </div>
 
         <p class="text-[11px] text-slate-500 leading-relaxed">
-          <span class="font-semibold text-slate-700">Max last checkpoint</span> is the one worth playing with. The
-          driver defaults it to <code class="font-mono-premium">final − 150</code>, a cap measured against 490 targets
-          from two observations. This repo's own f1–f4 corpus contains a measured 320-target optimum of
-          <code class="font-mono-premium">195 231 277 320</code>, whose last checkpoint sits at
-          <code class="font-mono-premium">final − 43</code> and which that default puts out of reach entirely. Leave it
-          blank for the default.
+          Ascension count includes the final target, so 5 ascensions takes four values from the pool. Values at or below
+          your current TE, and at or above the target, are dropped: neither is an ascension you can perform.
         </p>
-
-        <label class="flex items-start gap-3 text-xs text-slate-600">
-          <input
-            v-model="store.findSeedFirst"
-            type="checkbox"
-            :disabled="store.isRunning"
-            class="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 disabled:opacity-50"
-          />
-          <span>
-            <span class="font-bold text-slate-800">Find a starting chain for me</span> — run the coarse scan first and
-            take its pick instead of the chain above.
-          </span>
-        </label>
       </div>
 
-      <!-- Run -->
+      <!-- The number that should decide whether you press the button. -->
+      <div
+        class="rounded-xl border p-4 space-y-2"
+        :class="tooBig ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white'"
+      >
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+          <div>
+            <div class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Pool values</div>
+            <div class="text-lg font-black text-slate-900 tabular-nums">{{ poolSize }}</div>
+          </div>
+          <div>
+            <div class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Chains</div>
+            <div class="text-lg font-black tabular-nums" :class="tooBig ? 'text-red-700' : 'text-slate-900'">
+              {{ chainCountLabel }}
+            </div>
+          </div>
+          <div>
+            <div class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Est. wall clock</div>
+            <div class="text-lg font-black tabular-nums" :class="tooBig ? 'text-red-700' : 'text-slate-900'">
+              {{ estimateLabel }}
+            </div>
+          </div>
+          <div>
+            <div class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Assumed cost</div>
+            <div class="text-lg font-black text-slate-900 tabular-nums">15 s</div>
+          </div>
+        </div>
+        <p class="text-[11px] leading-relaxed" :class="tooBig ? 'text-red-800' : 'text-slate-500'">
+          <template v-if="!poolSize">
+            The pool is empty once values outside ({{ store.currentTE }}, {{ store.finalTE }}) are dropped.
+          </template>
+          <template v-else-if="!chainCount">
+            No chains: the ascension range asks for more checkpoints than {{ poolSize }} pool values can supply.
+          </template>
+          <template v-else-if="tooBig">
+            This will not finish. The estimate assumes 15 s per chain, which is the measured floor; prefix sharing makes
+            the real figure lower, but not by orders of magnitude. Raise the step or narrow the ascension range.
+          </template>
+          <template v-else>
+            The estimate assumes 15 s per chain across {{ store.workersInPool }} workers and ignores prefix sharing, so
+            it errs high. Leave the tab open: a closed tab stops the workers.
+          </template>
+        </p>
+      </div>
+
       <div class="flex flex-wrap gap-3">
         <button
           class="btn-premium btn-primary flex-1 py-4 text-sm shadow-xl shadow-rose-500/20 active:scale-[0.98]"
-          :disabled="store.isRunning"
+          :disabled="store.isRunning || !chainCount"
           @click="start"
         >
-          {{ store.isRunning ? 'Searching...' : 'Start search' }}
+          {{ store.isRunning ? 'Pricing every chain...' : 'Start exhaustive search' }}
         </button>
         <button
           v-if="store.isRunning"
@@ -183,8 +214,19 @@
         </button>
       </div>
 
-      <div v-if="store.stage" class="text-[11px] font-mono-premium text-slate-500">
-        {{ store.stage }} — {{ store.chainsDone }} / ~{{ store.chainsEstimated }} chains
+      <div v-if="store.stage" class="space-y-1">
+        <div class="flex items-center justify-between text-[10px] font-black uppercase tracking-widest">
+          <span class="text-slate-500">{{ store.stage }}</span>
+          <span class="text-slate-400 tabular-nums">
+            {{ pricedSoFar.toLocaleString() }} / {{ store.chainsEstimated.toLocaleString() }}
+          </span>
+        </div>
+        <div class="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+          <div class="h-full bg-rose-500 transition-all" :style="{ width: `${Math.round(livePercent)}%` }"></div>
+        </div>
+        <div v-if="store.secondsPerChain > 0" class="text-[10px] text-slate-400 tabular-nums">
+          {{ store.secondsPerChain.toFixed(2) }} s/chain measured here
+        </div>
       </div>
 
       <div
@@ -194,24 +236,26 @@
         <span class="font-bold uppercase tracking-wide">Search failed</span> — {{ store.error }}
       </div>
 
-      <!-- Result -->
       <div v-if="store.bestDays > 0" class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-1">
-        <div class="text-[10px] font-black text-emerald-700 uppercase tracking-widest">Best chain</div>
+        <div class="text-[10px] font-black text-emerald-700 uppercase tracking-widest">
+          Best chain<template v-if="!store.isRunning && !store.stoppedEarly"> — proven optimum of this space</template>
+        </div>
         <div class="font-mono-premium text-lg font-black text-slate-900">{{ store.bestChain.join(' ') }}</div>
         <div class="text-xs text-emerald-800">{{ store.bestDays.toFixed(3) }} days</div>
+        <p v-if="store.stoppedEarly" class="text-[11px] text-emerald-900/70 pt-1">
+          You stopped it early, so this is the best of what was priced, not the optimum of the space.
+        </p>
       </div>
 
-      <!-- The saved-run library. The answer to "can I reload this later". -->
+      <!-- Saved runs. Kept in this browser, reloadable at any time. -->
       <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
         <div class="flex items-center justify-between gap-3">
           <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Saved runs</h3>
           <span class="text-[10px] font-bold text-slate-400">{{ store.savedRuns.length }} / {{ MAX_RUNS }}</span>
         </div>
-
         <p class="text-[11px] text-slate-500 leading-relaxed">
-          Kept in this browser, per player, and reloadable at any time. Separate from the crash-recovery checkpoint,
-          which holds one run and only resumes onto identical settings. The oldest is dropped past
-          {{ MAX_RUNS }}.
+          Kept in this browser, per player. Separate from the crash-recovery checkpoint, which holds one run and only
+          resumes onto identical settings. The oldest is dropped past {{ MAX_RUNS }}.
         </p>
 
         <div class="flex flex-wrap gap-2">
@@ -237,8 +281,11 @@
             <div class="flex-1 min-w-[14rem]">
               <div class="text-xs font-bold text-slate-800">{{ run.label }}</div>
               <div class="text-[10px] text-slate-400 font-mono-premium">
-                {{ run.bestChain.join(' ') }} · {{ run.bestDays.toFixed(3) }} d · {{ run.chainsPriced }} chains ·
-                {{ run.effort }}<template v-if="!run.complete"> · stopped early</template>
+                {{ run.bestChain.join(' ') }} · {{ run.bestDays.toFixed(3) }} d · {{ run.chainsPriced }} chains<template
+                  v-if="!run.complete"
+                >
+                  · stopped early</template
+                >
               </div>
             </div>
             <button
@@ -261,16 +308,30 @@
 
       <SearchShapeChart v-if="store.pricedChains.length" :points="store.pricedChains" :best-chain="store.bestChain" />
 
-      <!-- Submission. Same payload and the same opt-in as the main panel. -->
+      <div v-if="store.pricedChains.length" class="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          class="px-4 py-2 rounded-lg bg-slate-800 text-white text-[10px] font-black uppercase tracking-widest hover:bg-slate-700"
+          @click="store.exportCsv()"
+        >
+          Download CSV
+        </button>
+        <span class="text-[11px] text-slate-500">
+          {{ store.csvRows.toLocaleString() }} chains, one row per leg. Safe to take mid-run.
+        </span>
+      </div>
+
+      <!-- Submission. Same payload, same opt-in, same disclosure as the main panel. -->
       <div v-if="store.bestDays > 0" class="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 space-y-3">
         <h3 class="text-[10px] font-black text-indigo-800 uppercase tracking-widest">Share this result</h3>
         <p class="text-[11px] text-indigo-900/80 leading-relaxed">
-          Identical to the main panel's submission, including what it contains and what it leaves out. A run opened from
-          the library above submits without a run cost, because the time it took was not this machine's.
+          An exhaustive result is the most useful thing the board can receive: a proven optimum of a stated space rather
+          than a search result. A run opened from the library above submits without a run cost, because the time it took
+          was not this machine's.
         </p>
         <label class="flex items-start gap-3 text-xs text-indigo-900">
           <input v-model="optIn" type="checkbox" class="mt-0.5 rounded border-indigo-300 text-indigo-600" />
-          <span>Yes, contribute this result.</span>
+          <span>Yes, contribute this result. Artifact inventory, timezone and local plan start are included.</span>
         </label>
         <div class="flex flex-wrap gap-2">
           <button
@@ -299,21 +360,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useChainSearchStore } from '@/stores/chainSearch';
-import { EFFORT_NOTES, EFFORT_ORDER } from '@/search/effort';
+import { buildPool, countChains, estimateHours, formatHours } from '@/search/exhaustive';
 import { MAX_RUNS } from '@/search/runLibrary';
 import SearchShapeChart from './charts/SearchShapeChart.vue';
 
 const props = defineProps<{ playerId: string }>();
 const store = useChainSearchStore();
 
-/** Blank means "leave the driver's default alone", which is why this is not bound straight to the
- *  store's nullable ref: an empty number input yields `undefined`, not null. */
-const maxLastInput = ref<number | null>(null);
-const maxLast = computed(() =>
-  typeof maxLastInput.value === 'number' && maxLastInput.value > 0 ? maxLastInput.value : null
-);
+/** Past this the estimate is longer than anyone will wait, and the form says so rather than
+ *  refusing: the point of this page is that the decision is the operator's. */
+const TOO_BIG_HOURS = 24 * 14;
+
+const rangeLo = ref(185);
+const rangeHi = ref(390);
+const rangeStep = ref(15);
+const minAsc = ref(5);
+const maxAsc = ref(7);
 
 const saveLabel = ref('');
 const saving = ref(false);
@@ -322,14 +386,59 @@ const submitting = ref(false);
 const submitMessage = ref('');
 const submitOk = ref(false);
 
+const poolSize = computed(
+  () =>
+    buildPool({ lo: rangeLo.value, hi: rangeHi.value, step: rangeStep.value }, store.currentTE, store.finalTE).length
+);
+
+/** Counted combinatorially, never by enumerating: at step 1 over a wide range the array of chains
+ *  does not fit in memory, and the whole point of showing this is to say so before that happens. */
+const chainCount = computed(() => countChains(poolSize.value, minAsc.value, maxAsc.value));
+
+const chainCountLabel = computed(() =>
+  Number.isFinite(chainCount.value) ? Math.round(chainCount.value).toLocaleString() : '∞'
+);
+
+/**
+ * Chains finished, counting the chunk in flight.
+ *
+ * `chainsDone` only advances when a whole chunk resolves, so on its own the counter sits still for
+ * as long as a chunk takes and the run looks hung. The pool reports within-batch progress for
+ * exactly this reason; the main panel already shows it as a second bar, and here it just folds into
+ * the first.
+ */
+const pricedSoFar = computed(() => store.chainsDone + (store.isRunning ? store.batchDone : 0));
+const livePercent = computed(() =>
+  store.chainsEstimated > 0 ? Math.min(100, (pricedSoFar.value / store.chainsEstimated) * 100) : 0
+);
+
+const hours = computed(() => estimateHours(chainCount.value, store.workersInPool));
+const estimateLabel = computed(() => (chainCount.value ? formatHours(hours.value) : '—'));
+const tooBig = computed(() => chainCount.value > 0 && hours.value > TOO_BIG_HOURS);
+
+// The pool's lower bound is only meaningful above current TE, and current TE arrives with the
+// backup rather than at mount. Nudge the default up once rather than leaving a range whose bottom
+// half is silently discarded.
+watch(
+  () => store.currentTE,
+  te => {
+    if (te > 0 && rangeLo.value <= te) rangeLo.value = te + 5;
+  },
+  { immediate: true }
+);
+
 onMounted(() => {
   void store.refreshSavedRuns(props.playerId);
-  void store.checkResumable(props.playerId);
 });
 
 async function start(): Promise<void> {
-  store.maxLastOverride = maxLast.value;
-  await store.start(props.playerId);
+  await store.startExhaustive(props.playerId, {
+    lo: rangeLo.value,
+    hi: rangeHi.value,
+    step: rangeStep.value,
+    minAsc: minAsc.value,
+    maxAsc: maxAsc.value,
+  });
 }
 
 async function save(): Promise<void> {
