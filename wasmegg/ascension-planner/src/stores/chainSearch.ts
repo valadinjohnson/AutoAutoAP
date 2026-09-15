@@ -47,6 +47,7 @@ import { describeAvailability, isConstrained, type Availability } from '@/search
 import { missedMilestones, usableMilestones, type Milestone } from '@/search/milestones';
 import { defaultSeedChain, seedChainIssue, usableCheckpoints, fitSeedToLimits } from '@/search/seedChain';
 import { summariseEpicResearch, summariseColleggtibles } from '@/search/progression';
+import { listRuns, saveRun, loadRun, deleteRun, defaultRunLabel, type RunSummary } from '@/search/runLibrary';
 import { epicResearchDefs } from '@/lib/epicResearch';
 import { getColleggtibleTiers } from 'lib/collegtibles';
 import {
@@ -92,6 +93,9 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
    * pinned to 5-8 and the probe silently used "one either side of the seed", so a user who wanted
    * to forbid an 8th rebuild had no way to say so.
    */
+  /** Override for the driver's `maxLast`. Null means "use the driver's default". Advanced only. */
+  const maxLastOverride = ref<number | null>(null);
+
   const minPrestiges = ref(5);
   const maxPrestiges = ref(8);
 
@@ -418,6 +422,72 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
           countProbe: EFFORT[effort.value].countProbe,
         })
   );
+
+  /**
+   * The saved run library. Separate from `resumable`, which is one crash-recovery slot tied to an
+   * exact fingerprint; these are kept deliberately and reload at any time. See search/runLibrary.ts.
+   */
+  const savedRuns = ref<RunSummary[]>([]);
+
+  async function refreshSavedRuns(playerId: string): Promise<void> {
+    savedRuns.value = await listRuns(await hashID(playerId));
+  }
+
+  async function saveCurrentRun(playerId: string, label?: string): Promise<RunSummary | null> {
+    if (!bestChain.value.length || bestDays.value <= 0) return null;
+    const summary = await saveRun(await hashID(playerId), {
+      label: label?.trim() || defaultRunLabel(finalTE.value, bestChain.value, bestDays.value),
+      currentTE: currentTE.value,
+      finalTE: finalTE.value,
+      effort: effort.value,
+      seedChain: seedChain.value,
+      bestChain: bestChain.value,
+      bestDays: bestDays.value,
+      entries: allEntries(),
+      bestLegs: bestLegs.value,
+      runLog: runLog.value,
+      complete: finishedCleanly.value,
+    });
+    await refreshSavedRuns(playerId);
+    return summary;
+  }
+
+  /**
+   * Reload a saved run into the panel as a finished result.
+   *
+   * Does NOT restart anything: the cache, the best chain and the log are restored and the panel
+   * renders them exactly as it would at the end of the run that produced them. The shape chart and
+   * the runners-up read the same cache, so both come back too.
+   */
+  async function openSavedRun(playerId: string, id: string): Promise<boolean> {
+    const summary = savedRuns.value.find(r => r.id === id);
+    const body = await loadRun(await hashID(playerId), id);
+    if (!summary || !body) return false;
+
+    liveCache = body.entries;
+    coarseCache = [];
+    bestChain.value = [...summary.bestChain];
+    bestDays.value = summary.bestDays;
+    bestLegs.value = body.bestLegs;
+    runLog.value = [...body.runLog];
+    chainsDone.value = body.entries.length;
+    chainsEstimated.value = body.entries.length;
+    csvRows.value = body.entries.length;
+    error.value = null;
+    stoppedEarly.value = !summary.complete;
+    stage.value = summary.complete ? 'done' : 'stopped';
+    // A reloaded run took no time HERE, so its cost is not this machine's and must not be submitted
+    // as though it were.
+    runStartedAt.value = 0;
+    runEndedAt.value = 0;
+    refreshShortlist(true);
+    return true;
+  }
+
+  async function deleteSavedRun(playerId: string, id: string): Promise<void> {
+    await deleteRun(await hashID(playerId), id);
+    await refreshSavedRuns(playerId);
+  }
 
   /** Rewrite the seed box so the chain sits inside the Limits box. Drives the panel's one-click fix. */
   function fitSeedToLimitsNow(): void {
@@ -946,6 +1016,11 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
         currentTE: currentTE.value,
         effort: effort.value,
         pin: pin.value,
+        // Normally the driver's own default (`final - 150`). Exposed so the cap can be tested
+        // rather than assumed: it was measured against 490 targets, and this repo's own f1-f4
+        // corpus contains a 320-target optimum whose last checkpoint sits at `final - 43`, which
+        // the default would put out of reach. Null leaves the driver's behaviour untouched.
+        ...(maxLastOverride.value !== null ? { maxLast: maxLastOverride.value } : {}),
         // Without these the probe defaulted to "one either side of the seed", which quietly
         // overrode whatever the user asked for in the range above.
         minCheckpoints: minPrestiges.value,
@@ -1095,6 +1170,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     forceContinue,
     pin,
     minPrestiges,
+    maxLastOverride,
     maxPrestiges,
     scheduleEnabled,
     availableFrom,
@@ -1142,6 +1218,11 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     seedChain,
     seedIssue,
     fitSeedToLimitsNow,
+    savedRuns,
+    refreshSavedRuns,
+    saveCurrentRun,
+    openSavedRun,
+    deleteSavedRun,
     seedOverride,
     estimateForCurrentSettings,
     findSeedFirst,

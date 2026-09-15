@@ -435,6 +435,12 @@
         </div>
       </div>
 
+      <!-- Insane mode. URL only (`?insane=1`), never linked: every knob on it overrides a default
+           that the main panel's measured accuracy figures were taken with. -->
+      <div v-if="insaneMode && playerId && !loading">
+        <InsanePanel :player-id="playerId" />
+      </div>
+
       <div v-else-if="plannerTab === 'automatic' && playerId && !loading">
         <!-- The header above is tall on first load, so on a laptop the tool opens below the fold
              and the tab looks empty. Say what is down there before anyone starts scrolling. -->
@@ -450,9 +456,13 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
           </svg>
           <p class="text-xs text-indigo-900/80 leading-relaxed">
-            <span class="font-bold text-indigo-900">The beta AAAP (Auto Auto Ascension Planner) is below AAP (Auto Ascension Planner), so keep scrolling.</span>
-            <span class="font-semibold">Chain Search</span> sits under
-            AAP. It takes the chain you typed and spends hours of your CPU looking for a faster one, if your computer catches on fire please call 0118 999 881 99 9119 725 3 (for leagal and serious reasons this is a joke.)
+            <span class="font-bold text-indigo-900"
+              >The beta AAAP (Auto Auto Ascension Planner) is below AAP (Auto Ascension Planner), so keep
+              scrolling.</span
+            >
+            <span class="font-semibold">Chain Search</span> sits under AAP. It takes the chain you typed and spends
+            hours of your CPU looking for a faster one, if your computer catches on fire please call 0118 999 881 99
+            9119 725 3 (for leagal and serious reasons this is a joke.)
           </p>
         </div>
 
@@ -596,6 +606,7 @@ import PlanLibrary from '@/components/PlanLibrary.vue';
 import PlanSelectionDialog from '@/components/PlanSelectionDialog.vue';
 import AutomaticPlanner from '@/components/auto/AutomaticPlanner.vue';
 import ChainSearchPanel from '@/components/auto/ChainSearchPanel.vue';
+import InsanePanel from '@/components/auto/InsanePanel.vue';
 import LeaderboardPanel from '@/components/auto/LeaderboardPanel.vue';
 import { useChainSearchStore } from '@/stores/chainSearch';
 import { useSalesStore } from '@/stores/sales';
@@ -640,6 +651,19 @@ const initialStateStore = useInitialStateStore();
 const actionsStore = useActionsStore();
 const uiStore = useUIStore();
 const { plannerTab, isHeaderCollapsed, isFooterCollapsed, loading, error } = storeToRefs(uiStore);
+
+/**
+ * Insane mode is reached only by URL: `?insane=1`, or `#insane` for a host that eats query strings.
+ *
+ * Read once at load rather than made reactive. It is a mode, not a toggle -- switching into it
+ * mid-session while a search is running would leave two panels driving one store -- and a reload is
+ * both the obvious way in and the obvious way out.
+ */
+const insaneMode = (() => {
+  if (typeof window === 'undefined') return false;
+  const params = new URLSearchParams(window.location.search);
+  return params.get('insane') === '1' || window.location.hash.replace(/^#\/?/, '') === 'insane';
+})();
 const virtueStore = useVirtueStore();
 const fuelTankStore = useFuelTankStore();
 const truthEggsStore = useTruthEggsStore();

@@ -33,6 +33,21 @@
 const SCHEMA = 3;
 
 /**
+ * Schemas this Worker will accept, newest last.
+ *
+ * NOT just `SCHEMA`. The app and the Worker deploy separately and never at the same instant, so
+ * insisting on an exact match guarantees a window where every submission is refused -- which is
+ * exactly what happened when 3 shipped in the app first: "collector said 400: unknown schema 3",
+ * with the sender given nothing to do about it.
+ *
+ * 3 is purely additive over 2 (run cost, epic research, colleggtibles, all optional), so a
+ * schema-2 row is a valid row that happens to carry none of them, and storing it is strictly better
+ * than rejecting the run that produced it. The `schema` field is stored as sent, so a reader can
+ * still tell which rows can have timing data and which cannot.
+ */
+const ACCEPTED_SCHEMAS = new Set([2, 3]);
+
+/**
  * Bounds on everything countable.
  *
  * These are not guesses about malice so much as the values past which a submission stops
@@ -76,7 +91,9 @@ const MAX = {
 function validateSubmission(s) {
   const problems = [];
   if (!s || typeof s !== 'object' || Array.isArray(s)) return ['not an object'];
-  if (s.schema !== SCHEMA) problems.push(`unknown schema ${String(s.schema)}`);
+  if (!ACCEPTED_SCHEMAS.has(s.schema)) {
+    problems.push(`unknown schema ${String(s.schema)}; this collector accepts ${[...ACCEPTED_SCHEMAS].join(', ')}`);
+  }
   if (!Array.isArray(s.chain) || s.chain.length < 2) {
     problems.push('chain must have at least two entries');
   } else if (s.chain.length > MAX.CHAIN) {
@@ -209,7 +226,9 @@ function colleggtibles(c) {
 
 function pickSubmission(s) {
   return defined({
-    schema: SCHEMA,
+    // As sent, not `SCHEMA`: stamping the current one would claim a schema-2 row carried fields it
+    // never had.
+    schema: num(s.schema) ?? SCHEMA,
     nickname: s.nickname ? text(s.nickname, MAX.NICKNAME) : undefined,
 
     chain: s.chain.slice(0, MAX.CHAIN),

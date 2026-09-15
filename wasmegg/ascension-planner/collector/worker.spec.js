@@ -377,10 +377,6 @@ describe('rejections are explained', () => {
     // Schema 1 is what the app sent before artifacts became labels. Refused rather than
     // reinterpreted: the two shapes disagree about what `artifacts` even is.
     expect((await post('/submit', { ...MINIMAL, schema: 1 })).status).toBe(400);
-    // Schema 2 is the previous release. It is refused rather than coerced: the run cost added in 3
-    // is absent there, and silently storing a row that looks current but has no timing in it is
-    // worse than telling the sender to update.
-    expect((await post('/submit', { ...MINIMAL, schema: 2 })).status).toBe(400);
   });
 });
 
@@ -451,5 +447,30 @@ describe('progression summaries', () => {
     const row = stored()[0][1];
     expect('epicResearch' in row).toBe(false);
     expect('colleggtibles' in row).toBe(false);
+  });
+});
+
+describe('schema compatibility', () => {
+  // The app and the Worker deploy separately. Refusing everything but the newest schema created a
+  // window where every submission failed with "unknown schema 3" and nothing the sender could do.
+  it('accepts the previous schema, which is missing only optional fields', async () => {
+    const res = await post('/submit', { ...MINIMAL, schema: 2 });
+    expect(res.status).toBe(200);
+    expect(stored()).toHaveLength(1);
+  });
+
+  it('records the schema the sender actually used', async () => {
+    await post('/submit', { ...MINIMAL, schema: 2 });
+    expect(stored()[0][1].schema).toBe(2);
+  });
+
+  it('still refuses a schema it has never heard of', async () => {
+    expect((await post('/submit', { ...MINIMAL, schema: 99 })).status).toBe(400);
+    expect((await post('/submit', { ...MINIMAL, schema: 1 })).status).toBe(400);
+  });
+
+  it('names what it does accept, so the sender knows what to do', async () => {
+    const res = await post('/submit', { ...MINIMAL, schema: 99 });
+    expect((await res.json()).problems.join(' ')).toContain('accepts 2, 3');
   });
 });
