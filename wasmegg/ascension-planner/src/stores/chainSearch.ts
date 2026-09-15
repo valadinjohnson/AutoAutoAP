@@ -222,6 +222,40 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
    */
   const suspendedSeconds = ref(0);
 
+  /**
+   * Wall clock around the search, for the submission's run cost.
+   *
+   * Kept separate from `secondsPerChain`, which is a smoothed live estimate and deliberately
+   * forgets the past. These two are the raw bookends, minus whatever `suspendedSeconds` says the
+   * browser froze, so a run left in a background tab overnight does not report twelve hours of
+   * "compute" it never did.
+   */
+  const runStartedAt = ref(0);
+  const runEndedAt = ref(0);
+
+  /** Minutes actually spent searching, or null when this result did not come from a live run. */
+  const runMinutes = computed(() => {
+    if (!runStartedAt.value || !runEndedAt.value) return null;
+    const elapsed = (runEndedAt.value - runStartedAt.value) / 1000 - suspendedSeconds.value;
+    return elapsed > 0 ? elapsed / 60 : null;
+  });
+
+  /**
+   * What the run cost this machine, for the collector. Null unless a live run finished here:
+   * a result replayed from a checkpoint took no time to produce, and reporting that as a fast
+   * machine would poison exactly the estimate this exists to improve.
+   */
+  const runCost = computed(() => {
+    const minutes = runMinutes.value;
+    if (minutes === null || chainsDone.value <= 0) return null;
+    return {
+      workers: workersInPool.value,
+      cores: typeof navigator !== 'undefined' && navigator.hardwareConcurrency ? navigator.hardwareConcurrency : null,
+      minutes,
+      secondsPerChain: (minutes * 60) / chainsDone.value,
+    };
+  });
+
   let pool: ChainSearchPool | null = null;
   let lastCheckpointAt = 0;
   let lastRateAt = 0;
@@ -609,6 +643,9 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       delivery: describeLoadoutSlots(inv.elr),
       earnings: describeLoadoutSlots(inv.earnings),
       chainsPriced: csvRows.value,
+      // Null for a checkpoint replay, and left off entirely in that case, so the board never reads
+      // "0 minutes for 400 chains" as a very fast machine.
+      ...(runCost.value ? { run: runCost.value } : {}),
     });
   }
 
@@ -800,6 +837,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     batchDone.value = 0;
     batchTotal.value = 0;
     suspendedSeconds.value = 0;
+    runStartedAt.value = Date.now();
+    runEndedAt.value = 0;
     lastCheckpointAt = 0;
     lastRateAt = Date.now();
     lastRateChains = 0;
@@ -951,6 +990,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       error.value = e instanceof Error ? e.message : String(e);
       stage.value = 'failed';
     } finally {
+      runEndedAt.value = Date.now();
       pool?.terminate();
       pool = null;
       isRunning.value = false;
@@ -1064,6 +1104,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     batchDone,
     batchTotal,
     suspendedSeconds,
+    runMinutes,
+    runCost,
     chainsEstimated,
     bestChain,
     bestDays,

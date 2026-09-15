@@ -72,7 +72,7 @@ export const EFFORT_NOTES: Record<EffortTier, EffortNote> = {
     warning: null,
   },
   thorough: {
-    label: 'Thorough',
+    label: 'Very high',
     cliDuration: '7–13 h',
     adds: '+ exhaustive 3-D slices over adjacent checkpoint triples.',
     accuracy:

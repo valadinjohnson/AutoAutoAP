@@ -243,3 +243,50 @@ describe('submissionFilename', () => {
     expect(submissionFilename(buildSubmission(inputs()))).toBe('chain-submission-490te-2026-09-13-12-00.json');
   });
 });
+
+describe('buildSubmission: run cost', () => {
+  const base = {
+    chain: [195, 226, 277, 317, 490],
+    seconds: 758.9 * 86400,
+    legs: [],
+    planStart: 1_757_000_000,
+    timezone: 'UTC',
+    currentTE: 170,
+    finalTE: 490,
+    effort: 'balanced',
+    availability: null,
+    holdShifts: false,
+    artifacts: [],
+    stones: [],
+    chainsPriced: 1661,
+    now: 1_757_100_000_000,
+  };
+
+  it('omits the run entirely when the cost is unknown', () => {
+    // A checkpoint replay produces an answer in no time at all. Recording that as a fast machine
+    // would poison the estimate this field exists to improve.
+    expect(buildSubmission({ ...base }).run).toBeUndefined();
+  });
+
+  it('carries workers, cores, minutes and seconds-per-chain', () => {
+    const s = buildSubmission({
+      ...base,
+      run: { workers: 12, cores: 20, minutes: 65.25, secondsPerChain: 2.3567 },
+    });
+    expect(s.run).toEqual({ workers: 12, cores: 20, minutes: 65.3, secondsPerChain: 2.36 });
+  });
+
+  it('keeps a null core count rather than inventing one', () => {
+    // `navigator.hardwareConcurrency` is absent on some browsers; null says "not reported",
+    // which a fit can exclude, where 0 would drag an average down.
+    const s = buildSubmission({
+      ...base,
+      run: { workers: 4, cores: null, minutes: 10, secondsPerChain: 1 },
+    });
+    expect(s.run?.cores).toBeNull();
+  });
+
+  it('bumps the schema so the collector can tell old submissions apart', () => {
+    expect(buildSubmission({ ...base }).schema).toBe(3);
+  });
+});

@@ -475,7 +475,10 @@ EXHAUSTIVE
 
 OUTPUT
   --jobs N                  Worker processes. The staged search keeps a persistent pool.
-  --csv FILE                The panel's own CSV export, one row per leg.
+  --csv FILE                Where to write the per-leg CSV of every chain priced.
+                            Defaults to fastsearch-<timestamp>.csv; nothing is discarded
+                            unless you pass --no-csv.
+  --no-csv                  Do not write a CSV. Only the printed summary survives the run.
   --top N                   Runners-up to print.               (default 10)
 
 WHAT-IF  (neither edits the save)
@@ -1084,7 +1087,10 @@ async function runExhaustive(
     '\n--- exhaustive: ' + pool.length + ' pool values, ' + lo + '-' + hi + ' prestiges' +
     '\n    ' + chains.length.toLocaleString() + ' chains, no pruning' +
     '\n    rough upper bound ' + (hours < 1 ? (hours * 60).toFixed(0) + ' min' : hours.toFixed(1) + ' h') +
-    ' across ' + jobs + ' process(es)'
+    ' across ' + jobs + ' process(es)' +
+    // Said BEFORE the run, not after. A run this long is routinely left overnight, and finding out
+    // where the results went should not require it to finish successfully first.
+    '\n    results -> ' + (resolveCsvPath() ?? '(nowhere: --no-csv)')
   );
   const CAP = 5000;
   if (chains.length > CAP && !has('yes')) {
@@ -1168,7 +1174,7 @@ async function runPlanSearch(
 
   if (has('exhaustive')) return runExhaustive(inputs, o);
 
-  // The panel labels the tiers Fast / Balanced / Exact / Thorough while the keys are
+  // The panel labels the tiers Fast / Balanced / Exact / Very high while the keys are
   // quick / balanced / normal / thorough. Accept BOTH spellings: someone reaching for the CLI
   // after using the slider will type what the slider said, and being told "exact" is not a tier
   // when the screen says EXACT is a pointless thing to be right about.
@@ -1278,7 +1284,22 @@ async function runPlanSearch(
   }
 }
 
-/** Print the answer, and write the panel's own CSV when asked. Shared by both new modes. */
+/**
+ * Where this run's CSV goes. Defaults to a timestamped file rather than nowhere.
+ *
+ * It used to write only when `--csv` was passed, and `--csv` is one line in a usage block nobody
+ * re-reads. A 245-minute exhaustive over 6,006 chains finished, printed its top ten, and discarded
+ * every other row: the cost of an unwanted 2 MB file is nothing next to that. `--no-csv` opts out.
+ */
+function resolveCsvPath(): string | null {
+  if (has('no-csv')) return null;
+  const explicit = arg('csv');
+  if (explicit) return explicit;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  return `fastsearch-${stamp}.csv`;
+}
+
+/** Print the answer, and write the panel's own CSV. Shared by both new modes. */
 function report(
   chain: number[],
   seconds: number,
@@ -1313,7 +1334,7 @@ function report(
     }
   }
 
-  const csv = arg('csv');
+  const csv = resolveCsvPath();
   if (csv) {
     const raw = (simContext() as any).rawBackup ?? null;
     writeFileSync(

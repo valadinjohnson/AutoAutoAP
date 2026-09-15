@@ -211,7 +211,7 @@
             </li>
           </ol>
           <p class="mt-3">
-            On a 7-ascension chain the Thorough tier prices about 11,062 chains, roughly
+            On a 7-ascension chain the highest tier prices about 11,062 chains, roughly
             <span class="font-bold text-slate-800">one in ten trillion</span> of the space, and lands within hours of
             the best answer found. It gets away with that because the sale calendar has already cut the range into
             pieces small enough to sweep.

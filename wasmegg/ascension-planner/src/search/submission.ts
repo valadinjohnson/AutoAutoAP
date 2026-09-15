@@ -36,7 +36,7 @@ import type { LegSummary } from './types';
  *     tier owned. The Worker must be redeployed with the matching SCHEMA at the same time -- it
  *     refuses a schema it does not know, so an app shipped ahead of the collector submits
  *     nothing. */
-export const SUBMISSION_SCHEMA = 2;
+export const SUBMISSION_SCHEMA = 3;
 
 /**
  * The artifact families a virtue ascension can actually equip.
@@ -67,11 +67,7 @@ export const SUBMISSION_SCHEMA = 2;
  * side, lunar the earnings side, and those are what a reader needs to judge whether a duration was
  * reachable on their own account.
  */
-export const VIRTUE_STONE_FAMILIES: ReadonlySet<string> = new Set([
-  'tachyon-stone',
-  'quantum-stone',
-  'lunar-stone',
-]);
+export const VIRTUE_STONE_FAMILIES: ReadonlySet<string> = new Set(['tachyon-stone', 'quantum-stone', 'lunar-stone']);
 
 /** Keep only the stones above; falls back to the label when a family did not resolve, the same
  *  way `keepVirtueArtifacts` does and for the same reason. */
@@ -223,7 +219,36 @@ export interface Submission {
 
   legs: SubmissionLeg[];
   chainsPriced: number;
+
+  /**
+   * What the run cost the machine that did it. Additive in schema 3.
+   *
+   * The panel's own time estimate is carried from one 20-core desktop ("~1 h 05 m on a 20-core
+   * desktop at 12 jobs") and scaled by nothing, so it is wrong for everyone else and known to be.
+   * Three numbers fix that, but only in aggregate: with enough submissions the board can fit
+   * seconds-per-chain against worker count and stop quoting one machine's stopwatch at everybody.
+   *
+   * All optional. A submission from an older build, or one resumed from a checkpoint where the
+   * elapsed time is not the time it took, simply has none rather than a misleading figure.
+   */
+  run?: RunCost;
+
   submittedAt: string;
+}
+
+/** The cost side of a run, for calibrating the panel's estimates against real machines. */
+export interface RunCost {
+  /** Background workers the pool actually used. The tunable that matters most. */
+  workers: number;
+  /** Logical cores the browser reported, so workers can be read as a fraction of the machine. */
+  cores: number | null;
+  /** Wall-clock minutes of searching, excluding time the tab spent frozen. */
+  minutes: number;
+  /**
+   * Seconds of wall clock per chain priced. Derivable from the two above, but recorded because the
+   * run measures it directly and a resumed run's replayed chains would otherwise skew the ratio.
+   */
+  secondsPerChain: number;
 }
 
 /**
@@ -272,8 +297,20 @@ export interface SubmissionInputs {
   delivery?: LoadoutSlot[];
   earnings?: LoadoutSlot[];
   chainsPriced: number;
+  /** Omitted when the run's cost is not known, e.g. a result replayed from a checkpoint. */
+  run?: RunCost;
   /** Injectable so tests are not clock-dependent. */
   now?: number;
+}
+
+/** Rounded before it leaves the browser: the extra precision is noise and a sharper fingerprint. */
+function roundRunCost(r: RunCost): RunCost {
+  return {
+    workers: Math.max(0, Math.round(r.workers)),
+    cores: r.cores === null || !Number.isFinite(r.cores) ? null : Math.max(0, Math.round(r.cores)),
+    minutes: Number(r.minutes.toFixed(1)),
+    secondsPerChain: Number(r.secondsPerChain.toFixed(2)),
+  };
 }
 
 export function buildSubmission(i: SubmissionInputs): Submission {
@@ -315,6 +352,9 @@ export function buildSubmission(i: SubmissionInputs): Submission {
       peakDeliveryQph: Number(((l.maxELR * 3600) / 1e15).toFixed(3)),
     })),
     chainsPriced: i.chainsPriced,
+    // Spread so an absent run cost leaves the key off entirely. `run: undefined` would serialise
+    // to nothing anyway, but the collector distinguishes "absent" from "present and empty".
+    ...(i.run ? { run: roundRunCost(i.run) } : {}),
     submittedAt: new Date(i.now ?? Date.now()).toISOString(),
   };
 }

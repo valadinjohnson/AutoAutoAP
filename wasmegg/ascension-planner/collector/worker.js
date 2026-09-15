@@ -30,7 +30,7 @@
 // 2: `artifacts` became a list of labels (best piece per family) instead of `{label, count}` for
 // every tier owned; see src/search/submission.ts. Rows already in KV at schema 1 keep their old
 // shape and the page renders both -- a stored row is history, not something to migrate.
-const SCHEMA = 2;
+const SCHEMA = 3;
 
 /**
  * Bounds on everything countable.
@@ -94,7 +94,11 @@ function validateSubmission(s) {
   if (s.nickname !== undefined && (typeof s.nickname !== 'string' || s.nickname.length > MAX.NICKNAME)) {
     problems.push(`nickname must be a string of at most ${MAX.NICKNAME} characters`);
   }
-  for (const [field, cap] of [['legs', MAX.LEGS], ['artifacts', MAX.ARTIFACTS], ['stones', MAX.STONES]]) {
+  for (const [field, cap] of [
+    ['legs', MAX.LEGS],
+    ['artifacts', MAX.ARTIFACTS],
+    ['stones', MAX.STONES],
+  ]) {
     if (s[field] !== undefined && (!Array.isArray(s[field]) || s[field].length > cap)) {
       problems.push(`${field} must be an array of at most ${cap} entries`);
     }
@@ -150,6 +154,25 @@ const defined = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !=
  * unrecognised schema is already refused above; within a schema, silence is the forgiving
  * choice and matches how src/search/submission.ts treats the CSV it builds from.
  */
+/**
+ * Run cost, bounded. Same whitelist discipline as everything else here: a field is rebuilt from
+ * named keys with sane ranges rather than trusted, because these numbers are going into an
+ * average and one `1e9` would move it for everyone.
+ */
+function runCost(r) {
+  if (!r || typeof r !== 'object') return undefined;
+  const workers = num(r.workers);
+  const minutes = num(r.minutes);
+  const perChain = num(r.secondsPerChain);
+  const cores = r.cores === null || r.cores === undefined ? null : num(r.cores);
+  if (workers === undefined || minutes === undefined || perChain === undefined) return undefined;
+  if (workers < 1 || workers > 256) return undefined;
+  if (minutes < 0 || minutes > 60 * 24 * 30) return undefined;
+  if (perChain < 0 || perChain > 3600) return undefined;
+  if (cores !== null && (cores === undefined || cores < 1 || cores > 256)) return undefined;
+  return { workers, cores, minutes, secondsPerChain: perChain };
+}
+
 function pickSubmission(s) {
   return defined({
     schema: SCHEMA,
@@ -182,6 +205,12 @@ function pickSubmission(s) {
     delivery: loadout(s.delivery),
     earnings: loadout(s.earnings),
     stones: counts(s.stones, MAX.STONES),
+
+    // Additive in schema 3: what the run cost the machine that did it, so the panel's time
+    // estimate can eventually be fitted against real hardware instead of quoting one 20-core
+    // desktop at everybody. Absent from older clients and from checkpoint replays, and `defined`
+    // drops the key entirely in that case rather than storing a zeroed row.
+    run: runCost(s.run),
 
     legs: Array.isArray(s.legs)
       ? s.legs.slice(0, MAX.LEGS).map(l =>
@@ -241,10 +270,7 @@ export default {
         gate = { n: 0, until: now + 60000 };
       }
       if (gate.n >= MAX.SUBMITS_PER_MINUTE) {
-        return json(
-          { error: `slow down - at most ${MAX.SUBMITS_PER_MINUTE} submissions a minute` },
-          429
-        );
+        return json({ error: `slow down - at most ${MAX.SUBMITS_PER_MINUTE} submissions a minute` }, 429);
       }
       gate.n++;
 
