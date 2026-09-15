@@ -1,5 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { buildPool, exhaustiveChains, countChains, estimateHours, formatHours, sortByPrefix } from './exhaustive';
+import {
+  buildPool,
+  exhaustiveChains,
+  countChains,
+  estimateHours,
+  formatHours,
+  sortByPrefix,
+  exhaustiveChainsWithGap,
+  countChainsWithGap,
+  bandedChains,
+  countBanded,
+  parseBand,
+  parseBands,
+  SMALLEST_MEASURED_GAP,
+} from './exhaustive';
 
 describe('buildPool', () => {
   it('walks the range by step', () => {
@@ -121,5 +135,152 @@ describe('sortByPrefix', () => {
       [300, 490],
     ]);
     expect(sorted.filter(c => c[0] === 200)).toHaveLength(3);
+  });
+});
+
+describe('exhaustiveChainsWithGap', () => {
+  const pool = [185, 200, 215, 230, 245, 260];
+
+  it('drops the chains that make step look like a spacing control', () => {
+    // `185 200 215 230 490` is legal at step 15 and is three 15-TE rebuilds in a row.
+    const loose = exhaustiveChains(pool, 5, 5, 490, 100);
+    expect(loose).toContainEqual([185, 200, 215, 230, 490]);
+
+    const tight = exhaustiveChainsWithGap(pool, 5, 5, 490, 100, 30);
+    expect(tight).not.toContainEqual([185, 200, 215, 230, 490]);
+    for (const chain of tight) {
+      const interior = chain.slice(0, -1);
+      for (let i = 1; i < interior.length; i++) expect(interior[i] - interior[i - 1]).toBeGreaterThanOrEqual(30);
+    }
+  });
+
+  it('does not constrain the leap to the final target', () => {
+    // The last leg is long by nature; `maxLast` is the knob for that end, not this one.
+    const chains = exhaustiveChainsWithGap(pool, 2, 2, 490, 100, 30);
+    expect(chains).toContainEqual([260, 490]);
+  });
+
+  it('is the unconstrained enumeration at gap 0', () => {
+    expect(exhaustiveChainsWithGap(pool, 3, 4, 490, 100, 0)).toEqual(exhaustiveChains(pool, 3, 4, 490, 100));
+  });
+
+  it('would exclude the best 7-ascension chain measured on this account at any gap above 15', () => {
+    // `185 200 215 230 290 380 490` scored 746.354 d with 15-TE interior gaps. This is the reason
+    // minimum gap is opt-in and defaults to off.
+    const wide = [185, 200, 215, 230, 290, 380];
+    expect(exhaustiveChainsWithGap(wide, 7, 7, 490, 100, SMALLEST_MEASURED_GAP)).toContainEqual([
+      185, 200, 215, 230, 290, 380, 490,
+    ]);
+    expect(exhaustiveChainsWithGap(wide, 7, 7, 490, 100, SMALLEST_MEASURED_GAP + 1)).toEqual([]);
+  });
+});
+
+describe('countChainsWithGap', () => {
+  it('agrees with the enumeration it is predicting', () => {
+    const pool = [185, 200, 215, 230, 245, 260, 275];
+    for (const gap of [0, 15, 30, 45]) {
+      for (const [lo, hi] of [
+        [3, 3],
+        [2, 4],
+        [4, 6],
+      ] as [number, number][]) {
+        expect(countChainsWithGap(pool, lo, hi, gap)).toBe(exhaustiveChainsWithGap(pool, lo, hi, 490, 100, gap).length);
+      }
+    }
+  });
+
+  it('counts a large gapped space without building it', () => {
+    const pool: number[] = [];
+    for (let v = 185; v <= 390; v += 1) pool.push(v);
+    // Would be ~10^11 chains unconstrained; the DP still answers immediately.
+    const n = countChainsWithGap(pool, 6, 6, 25);
+    expect(n).toBeGreaterThan(0);
+  });
+});
+
+describe('bandedChains', () => {
+  it('takes checkpoint N from band N, fixing the ascension count', () => {
+    const bands = [
+      [185, 190],
+      [220, 230],
+      [260, 270],
+    ];
+    const chains = bandedChains(bands, 490, 100);
+    expect(chains).toHaveLength(8);
+    expect(chains.every(c => c.length === 4)).toBe(true);
+    expect(chains.every(c => c[c.length - 1] === 490)).toBe(true);
+    expect(chains).toContainEqual([185, 220, 260, 490]);
+  });
+
+  it('keeps chains strictly increasing even when bands overlap', () => {
+    const bands = [
+      [200, 240],
+      [220, 260],
+    ];
+    const chains = bandedChains(bands, 490, 100);
+    // 240 -> 220 is not a chain; an overlap means "can be close", not "can go backwards".
+    expect(chains).not.toContainEqual([240, 220, 490]);
+    for (const c of chains) for (let i = 1; i < c.length; i++) expect(c[i]).toBeGreaterThan(c[i - 1]);
+  });
+
+  it('applies the minimum gap across band boundaries', () => {
+    const bands = [
+      [200, 210],
+      [215, 260],
+    ];
+    expect(bandedChains(bands, 490, 100, 30)).toEqual([
+      [200, 260, 490],
+      [210, 260, 490],
+    ]);
+  });
+
+  it('is empty rather than wrong when a band has nothing in it', () => {
+    expect(bandedChains([[200], []], 490, 100)).toEqual([]);
+    expect(bandedChains([], 490, 100)).toEqual([]);
+  });
+});
+
+describe('countBanded', () => {
+  it('agrees with the banded enumeration', () => {
+    const bands = [
+      [185, 195, 205],
+      [220, 235, 250],
+      [260, 280, 300],
+    ];
+    for (const gap of [0, 20, 40]) {
+      expect(countBanded(bands, 490, 100, gap)).toBe(bandedChains(bands, 490, 100, gap).length);
+    }
+  });
+});
+
+describe('parseBand / parseBands', () => {
+  it('reads a range with an explicit step', () => {
+    expect(parseBand('185-200:5')).toEqual([185, 190, 195, 200]);
+  });
+
+  it('falls back to the default step', () => {
+    expect(parseBand('185-200', 15)).toEqual([185, 200]);
+  });
+
+  it('reads a single value as a one-value band', () => {
+    expect(parseBand('195')).toEqual([195]);
+  });
+
+  it('accepts an en dash, because that is what a copied range often contains', () => {
+    expect(parseBand('185–195:5')).toEqual([185, 190, 195]);
+  });
+
+  it('is empty for something it cannot read, rather than guessing', () => {
+    expect(parseBand('')).toEqual([]);
+    expect(parseBand('abc')).toEqual([]);
+    expect(parseBand('300-200')).toEqual([]);
+  });
+
+  it('splits a multi-band string and drops blanks', () => {
+    const bands = parseBands('185-200:5; 210-240:10; ; 250-290:20');
+    expect(bands).toHaveLength(3);
+    expect(bands[0]).toEqual([185, 190, 195, 200]);
+    expect(bands[1]).toEqual([210, 220, 230, 240]);
+    expect(bands[2]).toEqual([250, 270, 290]);
   });
 });

@@ -104,7 +104,7 @@
           </label>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div v-if="spaceMode === 'pool'" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <label class="space-y-1">
             <span class="flex items-center gap-1.5">
               <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Checkpoints from</span>
@@ -158,7 +158,82 @@
           </label>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3">
+          <div class="flex flex-wrap items-center gap-4">
+            <label class="flex items-center gap-2 text-[11px] font-black text-slate-600 uppercase tracking-widest">
+              <input v-model="spaceMode" type="radio" value="pool" class="text-rose-600 focus:ring-rose-500" />
+              One range
+            </label>
+            <label class="flex items-center gap-2 text-[11px] font-black text-slate-600 uppercase tracking-widest">
+              <input v-model="spaceMode" type="radio" value="bands" class="text-rose-600 focus:ring-rose-500" />
+              Per-checkpoint bands
+            </label>
+            <HelpTip>
+              One range lets any checkpoint take any pool value, which is what allows 185 200 215 230 490: three 15-TE
+              rebuilds in a row. Bands say where each ascension should land, so the shape is decided by you rather than
+              by the enumeration. Bands fix the ascension count: N bands is N+1 ascensions.
+            </HelpTip>
+          </div>
+
+          <label v-if="spaceMode === 'bands'" class="space-y-1 block">
+            <span class="flex items-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                Bands, one per checkpoint
+              </span>
+              <HelpTip>
+                Semicolon separated, each `lo-hi` with an optional `:step`. `185-200:5; 210-240:10; 250-290:20` means
+                the first ascension lands between 185 and 200, the second between 210 and 240, the third between 250 and
+                290, then the target. Bands may overlap; chains still have to increase.
+              </HelpTip>
+            </span>
+            <input
+              v-model="bandsText"
+              type="text"
+              :disabled="store.isRunning"
+              placeholder="185-200:5; 210-240:10; 250-290:20"
+              class="w-full rounded-lg border-slate-300 text-sm font-mono-premium font-bold text-slate-800 disabled:opacity-50"
+            />
+            <span class="block text-[10px] text-slate-400">
+              <template v-if="bands.length">
+                {{ bands.length }} bands -> {{ bands.length + 1 }} ascensions ·
+                {{ bands.map(b => b.length).join(' x ') }} values
+              </template>
+              <template v-else>Nothing readable yet.</template>
+            </span>
+          </label>
+
+          <label class="space-y-1 block max-w-xs">
+            <span class="flex items-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                Minimum gap between checkpoints
+              </span>
+              <HelpTip>
+                Drops chains whose consecutive checkpoints sit closer than this. 0 is off. Measured caution: the best
+                7-ascension chain found on this account, 185 200 215 230 290 380 490 at 746.354 d, has 15-TE interior
+                gaps, so anything above 15 would have excluded it. Small early gaps are cheap when the ascension is
+                short. The leap to the final target is never constrained by this.
+              </HelpTip>
+            </span>
+            <input
+              v-model.number="minGap"
+              type="number"
+              min="0"
+              :disabled="store.isRunning"
+              class="w-full rounded-lg border-slate-300 text-sm font-bold text-slate-800 disabled:opacity-50"
+            />
+          </label>
+
+          <p
+            v-if="constrained"
+            class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2.5 leading-relaxed"
+          >
+            You have narrowed the space, so the winner will be the proven optimum
+            <span class="font-semibold">of what you described</span>, not of everything reachable. That is still a
+            stronger claim than the staged search makes, but it is a smaller one than an unconstrained run.
+          </p>
+        </div>
+
+        <div v-if="spaceMode === 'pool'" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <label class="space-y-1">
             <span class="flex items-center gap-1.5">
               <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Fewest ascensions</span>
@@ -475,7 +550,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useChainSearchStore } from '@/stores/chainSearch';
-import { buildPool, countChains, estimateHours, formatHours } from '@/search/exhaustive';
+import {
+  buildPool,
+  countChains,
+  countChainsWithGap,
+  countBanded,
+  parseBands,
+  estimateHours,
+  formatHours,
+} from '@/search/exhaustive';
 import { MAX_RUNS } from '@/search/runLibrary';
 import SearchShapeChart from './charts/SearchShapeChart.vue';
 import HelpTip from './HelpTip.vue';
@@ -486,6 +569,11 @@ const store = useChainSearchStore();
 /** Past this the estimate is longer than anyone will wait, and the form says so rather than
  *  refusing: the point of this page is that the decision is the operator's. */
 const TOO_BIG_HOURS = 24 * 14;
+
+/** `pool` is one range any checkpoint may draw from; `bands` gives each checkpoint its own. */
+const spaceMode = ref<'pool' | 'bands'>('pool');
+const bandsText = ref('185-200:5; 215-245:10; 260-300:10; 320-360:20');
+const minGap = ref(0);
 
 const rangeLo = ref(185);
 const rangeHi = ref(390);
@@ -500,14 +588,28 @@ const submitting = ref(false);
 const submitMessage = ref('');
 const submitOk = ref(false);
 
-const poolSize = computed(
-  () =>
-    buildPool({ lo: rangeLo.value, hi: rangeHi.value, step: rangeStep.value }, store.currentTE, store.finalTE).length
+const pool = computed(() =>
+  buildPool({ lo: rangeLo.value, hi: rangeHi.value, step: rangeStep.value }, store.currentTE, store.finalTE)
+);
+const poolSize = computed(() =>
+  spaceMode.value === 'bands' ? bands.value.reduce((n, b) => n + b.length, 0) : pool.value.length
 );
 
 /** Counted combinatorially, never by enumerating: at step 1 over a wide range the array of chains
  *  does not fit in memory, and the whole point of showing this is to say so before that happens. */
-const chainCount = computed(() => countChains(poolSize.value, minAsc.value, maxAsc.value));
+const bands = computed(() => (spaceMode.value === 'bands' ? parseBands(bandsText.value) : []));
+
+const chainCount = computed(() => {
+  if (spaceMode.value === 'bands') {
+    return bands.value.length ? countBanded(bands.value, store.finalTE, store.currentTE, minGap.value) : 0;
+  }
+  return minGap.value > 0
+    ? countChainsWithGap(pool.value, minAsc.value, maxAsc.value, minGap.value)
+    : countChains(poolSize.value, minAsc.value, maxAsc.value);
+});
+
+/** True when the space has been narrowed, which shrinks what the result proves. */
+const constrained = computed(() => spaceMode.value === 'bands' || minGap.value > 0);
 
 const chainCountLabel = computed(() =>
   Number.isFinite(chainCount.value) ? Math.round(chainCount.value).toLocaleString() : '∞'
@@ -552,6 +654,8 @@ async function start(): Promise<void> {
     step: rangeStep.value,
     minAsc: minAsc.value,
     maxAsc: maxAsc.value,
+    minGap: minGap.value,
+    ...(spaceMode.value === 'bands' ? { bands: bands.value } : {}),
   });
 }
 

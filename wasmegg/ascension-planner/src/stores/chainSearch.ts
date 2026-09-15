@@ -46,7 +46,7 @@ import { buildSubmission, scrubIdentifiers, submissionFilename, type Submission 
 import { describeAvailability, isConstrained, type Availability } from '@/search/availability';
 import { missedMilestones, usableMilestones, type Milestone } from '@/search/milestones';
 import { defaultSeedChain, seedChainIssue, usableCheckpoints, fitSeedToLimits } from '@/search/seedChain';
-import { buildPool, exhaustiveChains, sortByPrefix } from '@/search/exhaustive';
+import { buildPool, exhaustiveChainsWithGap, bandedChains, sortByPrefix } from '@/search/exhaustive';
 import { summariseEpicResearch, summariseColleggtibles } from '@/search/progression';
 import { listRuns, saveRun, loadRun, deleteRun, defaultRunLabel, type RunSummary } from '@/search/runLibrary';
 import { epicResearchDefs } from '@/lib/epicResearch';
@@ -920,19 +920,46 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
    */
   async function startExhaustive(
     playerId: string,
-    spec: { lo: number; hi: number; step: number; minAsc: number; maxAsc: number }
+    spec: {
+      lo: number;
+      hi: number;
+      step: number;
+      minAsc: number;
+      maxAsc: number;
+      /** Minimum TE between consecutive checkpoints. 0 leaves the enumeration unconstrained. */
+      minGap?: number;
+      /** Per-checkpoint bands. When present these replace the single pool entirely, and the
+       *  ascension count is `bands.length + 1` rather than the min/max range. */
+      bands?: number[][];
+    }
   ): Promise<void> {
     if (isRunning.value) return;
 
-    const poolValues = buildPool({ lo: spec.lo, hi: spec.hi, step: spec.step }, currentTE.value, finalTE.value);
-    if (!poolValues.length) {
-      error.value = `The pool is empty once values outside (${currentTE.value}, ${finalTE.value}) are dropped.`;
-      return;
-    }
-    const chains = sortByPrefix(exhaustiveChains(poolValues, spec.minAsc, spec.maxAsc, finalTE.value, currentTE.value));
-    if (!chains.length) {
-      error.value = 'No chains: the ascension range asks for more checkpoints than the pool can supply.';
-      return;
+    const minGap = Math.max(0, Math.floor(spec.minGap ?? 0));
+    let chains: number[][];
+
+    if (spec.bands?.length) {
+      chains = sortByPrefix(bandedChains(spec.bands, finalTE.value, currentTE.value, minGap));
+      if (!chains.length) {
+        error.value =
+          'No chains: the bands leave nothing strictly increasing once the minimum gap and your current TE are applied.';
+        return;
+      }
+    } else {
+      const poolValues = buildPool({ lo: spec.lo, hi: spec.hi, step: spec.step }, currentTE.value, finalTE.value);
+      if (!poolValues.length) {
+        error.value = `The pool is empty once values outside (${currentTE.value}, ${finalTE.value}) are dropped.`;
+        return;
+      }
+      chains = sortByPrefix(
+        exhaustiveChainsWithGap(poolValues, spec.minAsc, spec.maxAsc, finalTE.value, currentTE.value, minGap)
+      );
+      if (!chains.length) {
+        error.value = minGap
+          ? `No chains: nothing in the pool is ${minGap} TE apart at that ascension count.`
+          : 'No chains: the ascension range asks for more checkpoints than the pool can supply.';
+        return;
+      }
     }
 
     error.value = null;
@@ -942,7 +969,10 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     startedAt.value = Date.now();
     chainsDone.value = 0;
     chainsReplayed.value = 0;
-    runLog.value = [`--- exhaustive: ${poolValues.length} pool values, ${spec.minAsc}-${spec.maxAsc} ascensions`];
+    runLog.value = spec.bands?.length
+      ? [`--- exhaustive: ${spec.bands.length} bands, ${spec.bands.length + 1} ascensions`]
+      : [`--- exhaustive: ${spec.minAsc}-${spec.maxAsc} ascensions`];
+    if (minGap) runLog.value.push(`minimum gap ${minGap} TE between checkpoints`);
     runLog.value.push(`${chains.length.toLocaleString()} chains, no pruning`);
     secondsPerChain.value = 0;
     liveCache = [];

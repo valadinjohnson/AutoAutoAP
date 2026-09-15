@@ -133,3 +133,180 @@ export function sortByPrefix(chains: number[][]): number[][] {
     return a.length - b.length;
   });
 }
+
+/* ------------------------------------------------------------------------------------------- *
+ * Shaping the space
+ *
+ * Plain `--range lo:hi:step` enumeration has a blind spot: STEP CONTROLS THE GRID, NOT THE CHAIN.
+ * At step 15 the pool is 185, 200, 215, 230 ... and `185 200 215 230 490` is a perfectly legal
+ * chain -- three 15-TE ascensions followed by a 260-TE one. Each of those is a full farm rebuild
+ * for almost no earning time, and the enumeration prices thousands of them.
+ *
+ * Two ways to stop that, both OPT-IN, because both narrow what the run proves. An exhaustive over
+ * a restricted space is the true optimum OF THAT SPACE, and the moment a constraint is added the
+ * claim shrinks with it. That is worth saying out loud rather than burying: the value of this mode
+ * is that it proves something.
+ *
+ * AND A MEASURED WARNING ABOUT MINIMUM GAP. It is tempting to set one and forget it. The best
+ * 7-ascension chain found on this account so far is `185 200 215 230 290 380 490`, whose interior
+ * gaps are 15, 15, 15, 60, 90 -- any minimum gap above 15 excludes it outright. Small early gaps
+ * are cheap when the ascension is short; they only look absurd from the far end of the chain.
+ * ------------------------------------------------------------------------------------------- */
+
+/** Smallest interior gap seen in a chain measured as good on this project's own corpora. */
+export const SMALLEST_MEASURED_GAP = 15;
+
+/**
+ * Every strictly-increasing chain over `pool`, with a minimum distance between consecutive
+ * checkpoints. `minGap` of 0 or less is the unconstrained enumeration.
+ *
+ * The gap to the final target is deliberately NOT constrained: the last leg is long by nature and
+ * the driver's `maxLast` is the knob for that end of the chain.
+ */
+export function exhaustiveChainsWithGap(
+  pool: number[],
+  minAsc: number,
+  maxAsc: number,
+  final: number,
+  currentTE: number,
+  minGap: number
+): number[][] {
+  if (!(minGap > 0)) return exhaustiveChains(pool, minAsc, maxAsc, final, currentTE);
+  const out: number[][] = [];
+  const walk = (i: number, acc: number[]) => {
+    if (acc.length >= minAsc - 1 && acc.length <= maxAsc - 1 && acc.length) out.push([...acc, final]);
+    if (acc.length >= maxAsc - 1) return;
+    for (let j = i; j < pool.length; j++) {
+      const v = pool[j];
+      if (v >= final) break;
+      if (!acc.length ? v > currentTE : v - acc[acc.length - 1] >= minGap) walk(j + 1, [...acc, v]);
+    }
+  };
+  walk(0, []);
+  return out;
+}
+
+/**
+ * How many chains the above would return, without building them.
+ *
+ * `countChains` is a sum of binomials, which stops being right the moment a gap constraint exists.
+ * This is a DP over (pool index, checkpoints chosen so far): `ways[j][k]` is the number of chains
+ * of k checkpoints whose last one is `pool[j]`. O(pool^2 x maxAsc), which is nothing next to
+ * enumerating, and it keeps the promise that the form can refuse a space before allocating it.
+ */
+export function countChainsWithGap(pool: number[], minAsc: number, maxAsc: number, minGap: number): number {
+  if (!(minGap > 0)) return countChains(pool.length, minAsc, maxAsc);
+  const n = pool.length;
+  const maxPick = Math.max(0, Math.floor(maxAsc) - 1);
+  const minPick = Math.max(1, Math.floor(minAsc) - 1);
+  if (n === 0 || maxPick === 0) return 0;
+
+  // ways[k][j]: chains of k checkpoints ending at pool[j].
+  let ways: number[][] = [];
+  ways[1] = new Array(n).fill(1);
+  let total = minPick <= 1 && 1 <= maxPick ? n : 0;
+
+  for (let k = 2; k <= maxPick; k++) {
+    const row = new Array(n).fill(0);
+    for (let j = 0; j < n; j++) {
+      let sum = 0;
+      for (let i = 0; i < j; i++) {
+        if (pool[j] - pool[i] >= minGap) sum += ways[k - 1][i];
+      }
+      row[j] = sum;
+      if (!Number.isFinite(row[j])) return Infinity;
+    }
+    ways[k] = row;
+    if (k >= minPick) {
+      for (const v of row) {
+        total += v;
+        if (!Number.isFinite(total)) return Infinity;
+      }
+    }
+  }
+  return total;
+}
+
+/**
+ * Per-checkpoint bands: checkpoint 1 comes from band 1, checkpoint 2 from band 2, and so on.
+ *
+ * This is the surgical version of the same idea. "185-200, then 210-240, then 250-290" says where
+ * each ascension should land rather than leaving the enumeration free to stack four of them inside
+ * twenty TE. The ascension count is fixed by construction: N bands is N+1 ascensions, target
+ * included.
+ *
+ * Bands may overlap; the strictly-increasing and `minGap` rules still apply, so an overlap simply
+ * means the two checkpoints can be close, not that they can swap order.
+ */
+export function bandedChains(bands: number[][], final: number, currentTE: number, minGap = 0): number[][] {
+  if (!bands.length || bands.some(b => !b.length)) return [];
+  const out: number[][] = [];
+  const walk = (slot: number, acc: number[]) => {
+    if (slot === bands.length) {
+      out.push([...acc, final]);
+      return;
+    }
+    for (const v of bands[slot]) {
+      if (v >= final) continue;
+      const ok = acc.length ? v - acc[acc.length - 1] >= Math.max(1, minGap) : v > currentTE;
+      if (ok) walk(slot + 1, [...acc, v]);
+    }
+  };
+  walk(0, []);
+  return out;
+}
+
+/** Counted the same way, by DP across the bands, so a wide set can be refused before it is built. */
+export function countBanded(bands: number[][], final: number, currentTE: number, minGap = 0): number {
+  if (!bands.length || bands.some(b => !b.length)) return 0;
+  const gap = Math.max(1, minGap);
+
+  // counts[i]: how many partial chains end at bands[slot][i].
+  let prev: number[] = bands[0].filter(v => v > currentTE && v < final).map(() => 1);
+  let prevValues = bands[0].filter(v => v > currentTE && v < final);
+
+  for (let slot = 1; slot < bands.length; slot++) {
+    const values = bands[slot].filter(v => v < final);
+    const row = new Array(values.length).fill(0);
+    for (let j = 0; j < values.length; j++) {
+      let sum = 0;
+      for (let i = 0; i < prevValues.length; i++) {
+        if (values[j] - prevValues[i] >= gap) sum += prev[i];
+      }
+      row[j] = sum;
+      if (!Number.isFinite(row[j])) return Infinity;
+    }
+    prev = row;
+    prevValues = values;
+  }
+
+  let total = 0;
+  for (const v of prev) {
+    total += v;
+    if (!Number.isFinite(total)) return Infinity;
+  }
+  return total;
+}
+
+/** `185-200:5` -> [185, 190, 195, 200]. The band form of a pool spec, for the UI's text entry. */
+export function parseBand(text: string, defaultStep = 5): number[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  const [rangePart, stepPart] = trimmed.split(':');
+  const bounds = rangePart.split(/[-–]/).map(x => Number(x.trim()));
+  const step = Number(stepPart) > 0 ? Math.floor(Number(stepPart)) : defaultStep;
+  if (bounds.length === 1 && Number.isFinite(bounds[0])) return [Math.floor(bounds[0])];
+  if (bounds.length !== 2 || !bounds.every(Number.isFinite) || bounds[1] < bounds[0]) return [];
+  const out: number[] = [];
+  for (let v = Math.floor(bounds[0]); v <= Math.floor(bounds[1]); v += step) out.push(v);
+  return out;
+}
+
+/** `185-200:5; 210-240; 250-290` -> one band per segment. Blank segments are dropped. */
+export function parseBands(text: string, defaultStep = 5): number[][] {
+  return text
+    .split(';')
+    .flatMap(part => part.split('\n'))
+    .map(part => parseBand(part, defaultStep))
+    .filter(b => b.length);
+}
