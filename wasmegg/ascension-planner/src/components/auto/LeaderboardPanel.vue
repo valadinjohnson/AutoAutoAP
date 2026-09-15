@@ -102,6 +102,7 @@
                   <span v-else class="font-bold text-amber-700">{{ row.waitingHours.toFixed(1) }} h</span>
                 </td>
                 <td class="py-2 pr-3 text-slate-400">{{ row.window || 'no schedule' }}</td>
+                <td class="py-2 pr-3 text-slate-400">{{ row.effort || '—' }}</td>
                 <td class="py-2 text-right">
                   <button
                     type="button"
@@ -113,7 +114,7 @@
                 </td>
               </tr>
               <tr v-if="open === (row.id ?? String(i))" class="bg-slate-50">
-                <td colspan="9" class="px-3 py-3">
+                <td colspan="10" class="px-3 py-3">
                   <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 text-[11px]">
                     <div>
                       <h4 class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Run</h4>
@@ -233,6 +234,7 @@ interface Row {
   currentTE?: number;
   finalTE: number;
   window?: string | null;
+  effort?: string;
   holdShifts?: boolean;
   waitingHours?: number | null;
   chainsPriced?: number;
@@ -256,6 +258,9 @@ const COLUMNS: { key: SortKey; label: string; right?: boolean }[] = [
   { key: 'endLocal', label: 'Finishes' },
   { key: 'waitingHours', label: 'Waiting', right: true },
   { key: 'window', label: 'Window' },
+  // Without this, two rows from the same person that differ only by effort tier are
+  // indistinguishable -- which is exactly the comparison the board now keeps rows for.
+  { key: 'effort', label: 'Effort' },
 ];
 
 const rows = ref<Row[]>([]);

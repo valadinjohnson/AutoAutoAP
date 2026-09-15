@@ -143,10 +143,81 @@ describe('what never gets stored', () => {
 });
 
 describe('rate limit', () => {
-  it('allows one submission per address per minute', async () => {
-    expect((await post('/submit', MINIMAL, '4.4.4.4')).status).toBe(200);
+  // A burst, not one-per-minute: comparing effort tiers means posting several results back to
+  // back, and the old gate failed the second one with a message that read like a broken server.
+  it('allows a burst from one address, then refuses', async () => {
+    for (let i = 0; i < 10; i++) {
+      expect((await post('/submit', { ...MINIMAL, nickname: `n${i}` }, '4.4.4.4')).status).toBe(200);
+    }
+    const over = await post('/submit', MINIMAL, '4.4.4.4');
+    expect(over.status).toBe(429);
+    expect((await over.json()).error).toMatch(/slow down/);
+  });
+
+  it('counts each address separately', async () => {
+    for (let i = 0; i < 10; i++) await post('/submit', { ...MINIMAL, nickname: `a${i}` }, '4.4.4.4');
     expect((await post('/submit', MINIMAL, '4.4.4.4')).status).toBe(429);
     expect((await post('/submit', MINIMAL, '5.5.5.5')).status).toBe(200);
+  });
+
+  it('survives a corrupt gate value instead of locking the address out', async () => {
+    await env.SUBMISSIONS.put('gate:6.6.6.6', 'not json');
+    expect((await post('/submit', MINIMAL, '6.6.6.6')).status).toBe(200);
+  });
+});
+
+describe('the board keeps different experiments, and collapses re-runs', () => {
+  const run = (over, ip) =>
+    post(
+      '/submit',
+      {
+        ...MINIMAL,
+        nickname: 'Willsalt',
+        chain: [195, 490],
+        effort: 'balanced',
+        window: null,
+        holdShifts: true,
+        ...over,
+      },
+      ip
+    );
+
+  it('keeps one person\'s runs at different effort tiers', async () => {
+    await run({ effort: 'balanced', durationDays: 700 }, '1.1.1.1');
+    await run({ effort: 'thorough', durationDays: 690 }, '1.1.1.1');
+    const board = await (await get('/leaderboard?final=490')).json();
+    expect(board.rows.map(r => r.effort).sort()).toEqual(['balanced', 'thorough']);
+  });
+
+  it('keeps one person\'s different chain shapes', async () => {
+    await run({ chain: [195, 490], durationDays: 700 }, '1.1.1.1');
+    await run({ chain: [180, 220, 490], durationDays: 705 }, '1.1.1.1');
+    const board = await (await get('/leaderboard?final=490')).json();
+    expect(board.rows).toHaveLength(2);
+  });
+
+  it('keeps a scheduled run beside the same chain run unconstrained', async () => {
+    await run({ window: null, durationDays: 700 }, '1.1.1.1');
+    await run({ window: 'every day 09:00-23:00 America/Denver', durationDays: 740 }, '1.1.1.1');
+    const board = await (await get('/leaderboard?final=490')).json();
+    expect(board.rows).toHaveLength(2);
+  });
+
+  it('collapses a genuine re-run to the faster one', async () => {
+    // Same chain, same effort, same schedule -- the same experiment priced twice. Duration is
+    // deliberately not part of the identity, so these are one row and the quicker stands.
+    await run({ durationDays: 700 }, '1.1.1.1');
+    await run({ durationDays: 690 }, '1.1.1.1');
+    const board = await (await get('/leaderboard?final=490')).json();
+    expect(board.rows).toHaveLength(1);
+    expect(board.rows[0].durationDays).toBe(690);
+  });
+
+  it('never collapses anonymous submissions, which are not one person', async () => {
+    await run({ nickname: undefined, durationDays: 700 }, '1.1.1.1');
+    await run({ nickname: undefined, durationDays: 701 }, '2.2.2.2');
+    const board = await (await get('/leaderboard?final=490')).json();
+    expect(board.rows).toHaveLength(2);
   });
 });
 

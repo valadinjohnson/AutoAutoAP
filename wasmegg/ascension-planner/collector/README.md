@@ -190,10 +190,10 @@ no button.
 
 | | |
 |---|---|
-| `POST /submit` | one submission; validated against a whitelist, rate-limited to one per IP per minute |
+| `POST /submit` | one submission; validated against a whitelist, rate-limited to 10 per IP per minute |
 | `POST /csv?id=<id>` | that run's gzipped CSV. Must be gzip, capped at 8 MB compressed |
 | `GET /csv?id=<id>` | it back, served `Content-Encoding: gzip` |
-| `GET /leaderboard?final=490&limit=50` | best chain per submitter, already in duration order |
+| `GET /leaderboard?final=490&limit=50` | one row per distinct run, already in duration order |
 | `GET /all` | everything, for your own analysis |
 | `GET /` | the leaderboard page |
 
@@ -228,7 +228,7 @@ how many you hold decides what can be built. Measured on a real account, this to
 from 102 entries and 2,455 characters to 8 artifacts and 7 stone lines -- a smaller payload and a much duller
 fingerprint, for no loss of anything that determined the result.
 
-Not stored: IP addresses beyond a rate-limit key that expires after 60 seconds, headers,
+Not stored: IP addresses beyond a rate-limit key that expires within two minutes, headers,
 cookies, or anything derived from the connection.
 
 **Still identifying, and the app says so before the button is pressed.** The artifact
@@ -247,6 +247,17 @@ Durations are not comparable between accounts. A chain's length depends on artif
 research and starting TE at least as much as on the chain, and on whether the run was
 constrained to the player's waking hours. It answers "what shapes are winning for people",
 not "who is best". The page says so under the table.
+
+**One row per distinct RUN, not per person.** A submission is identified by nickname, target,
+chain, effort tier, schedule window and whether shifts were held. Two that agree on all of it are
+the same experiment priced twice -- a re-run, the same plan from a different start -- and the
+faster one stands for both. Two that differ anywhere are different experiments and both show,
+because "does `thorough` beat `balanced` here" and "does this shape travel between accounts" are
+the questions the board exists to answer, and an earlier version that kept one row per person per
+target deleted the evidence for both. Duration is deliberately not part of the identity.
+
+Anonymous rows are never collapsed: anonymous is not an identity, and two people who both tried
+the same chain would otherwise cost one of them their result.
 
 `waiting` blank means the submission carried no per-leg detail — a chain replayed from a saved
 checkpoint keeps none. That is **unknown**, not zero, and it sorts accordingly.

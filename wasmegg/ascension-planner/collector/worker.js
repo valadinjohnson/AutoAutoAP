@@ -65,6 +65,8 @@ const MAX = {
    *  rather than exact so a future game change does not silently truncate a real set. */
   LOADOUT_SLOTS: 8,
   LOADOUT_STONES: 8,
+  /** Per address, per minute. Enough to post every result of a sitting; far short of a script. */
+  SUBMITS_PER_MINUTE: 10,
 };
 
 /** Same rules as src/search/submission.ts. Returns the problems; empty means acceptable. */
@@ -216,13 +218,35 @@ export default {
 
     // ------------------------------------------------------------------ submit
     if (url.pathname === '/submit' && request.method === 'POST') {
-      // Cheap flood guard. One submission per IP per minute is far above what a human doing this
-      // by hand needs, and the key expires so nothing about the address is retained.
+      // Flood guard, as a small burst rather than a hard one-per-minute.
+      //
+      // One per minute was not "far above what a human needs" after all: comparing effort tiers,
+      // or two chain shapes, means submitting several results back to back, and the old gate made
+      // the second one fail with a message that read like the collector was broken. A burst
+      // covers a person emptying their results; it still stops a script.
+      //
+      // The window is carried in the value rather than leaned on KV's TTL, because updating a key
+      // to count a submission would otherwise reset its expiry and turn a fixed minute into a
+      // window that never closes while someone keeps posting.
       const ip = request.headers.get('cf-connecting-ip') || 'unknown';
       const gateKey = `gate:${ip}`;
-      if (await env.SUBMISSIONS.get(gateKey)) {
-        return json({ error: 'slow down - one submission per minute' }, 429);
+      const now = Date.now();
+      let gate = null;
+      try {
+        gate = JSON.parse((await env.SUBMISSIONS.get(gateKey)) || 'null');
+      } catch {
+        gate = null;
       }
+      if (!gate || typeof gate.until !== 'number' || gate.until <= now) {
+        gate = { n: 0, until: now + 60000 };
+      }
+      if (gate.n >= MAX.SUBMITS_PER_MINUTE) {
+        return json(
+          { error: `slow down - at most ${MAX.SUBMITS_PER_MINUTE} submissions a minute` },
+          429
+        );
+      }
+      gate.n++;
 
       let body;
       try {
@@ -241,7 +265,9 @@ export default {
       const dur = String(Math.round(record.durationDays * 10000)).padStart(10, '0');
       const id = crypto.randomUUID().slice(0, 8);
       await env.SUBMISSIONS.put(`sub:${record.finalTE}:${dur}:${id}`, JSON.stringify(record));
-      await env.SUBMISSIONS.put(gateKey, '1', { expirationTtl: 60 });
+      // TTL is longer than the window so a stale counter cannot outlive it and lock anyone out;
+      // the `until` inside decides, and the TTL only keeps the address from being retained.
+      await env.SUBMISSIONS.put(gateKey, JSON.stringify(gate), { expirationTtl: 120 });
 
       return json({ ok: true, id });
     }
@@ -352,15 +378,41 @@ export default {
 
       if (url.pathname === '/all') return json({ count: rows.length, rows });
 
-      // One row per submitter, best only: without this a single player running the search ten
-      // times owns the whole board, which tells nobody anything.
+      // Collapse RE-RUNS, not different experiments.
+      //
+      // This used to key on nickname plus target, so one person got exactly one row per target
+      // and everything else they sent was silently dropped from the board. That threw away the
+      // answers to the questions the board exists to ask: whether the effort tiers behave the
+      // same everywhere, whether a chain shape that wins on one account wins on another, what a
+      // schedule actually costs. Submitting 195 219 248 490 at `thorough` and 180 490 at
+      // `balanced` is two results, and showing one of them is worse than showing neither --
+      // the reader cannot tell that the other was ever tried.
+      //
+      // So the key is everything that makes a run a different experiment. Two submissions that
+      // agree on all of it are the same run priced twice -- a re-run after a restart, the same
+      // plan from a slightly different start -- and the faster one stands for both. Duration is
+      // deliberately NOT in the key: two runs of the same chain are the same experiment even
+      // when they land a few hours apart.
+      //
+      // ANONYMOUS IS NEVER COLLAPSED, because it is not an identity. Two anonymous submitters
+      // who happen to have tried the same chain at the same effort are two people, and deduping
+      // them would delete one player's result on the strength of a name they declined to give.
       const seen = new Set();
       const best = [];
       for (const r of rows) {
-        const who = r.nickname || 'anonymous';
-        const key = `${who}:${r.finalTE}`;
-        if (who !== 'anonymous' && seen.has(key)) continue;
-        seen.add(key);
+        const who = r.nickname || '';
+        if (who) {
+          const key = [
+            who,
+            r.finalTE,
+            (r.chain || []).join('-'),
+            r.effort || '',
+            r.window || '',
+            r.holdShifts ? 'hold' : 'free',
+          ].join('|');
+          if (seen.has(key)) continue;
+          seen.add(key);
+        }
         best.push(r);
         if (best.length >= limit) break;
       }

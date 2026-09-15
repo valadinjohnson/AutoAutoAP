@@ -12,7 +12,8 @@ export type SortKey =
   | 'durationDays'
   | 'endLocal'
   | 'waitingHours'
-  | 'window';
+  | 'window'
+  | 'effort';
 
 export interface SortableRow {
   nickname?: string;
@@ -22,6 +23,7 @@ export interface SortableRow {
   endLocal?: string;
   waitingHours?: number | null;
   window?: string | null;
+  effort?: string;
 }
 
 /**
