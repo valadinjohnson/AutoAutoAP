@@ -25,6 +25,7 @@
  * The nickname is optional and free text; nothing is derived from the account.
  */
 import type { InventoryCount, LoadoutSlot } from './csv';
+import type { ColleggtibleSummary, EpicResearchSummary } from './progression';
 import type { Availability } from './availability';
 import { describeAvailability } from './availability';
 import type { LegSummary } from './types';
@@ -233,6 +234,17 @@ export interface Submission {
    */
   run?: RunCost;
 
+  /**
+   * Account-wide multipliers the simulator reads on every leg. Additive in schema 3.
+   *
+   * A duration means nothing without them: the same chain on an account with every colleggtible at
+   * T4 is a different claim from the same chain with none, and the board already records the
+   * artifact loadout for exactly that reason. Summarised rather than dumped, because a full
+   * per-item level list is a sharp fingerprint and is mostly all-max or all-zero anyway.
+   */
+  epicResearch?: EpicResearchSummary;
+  colleggtibles?: ColleggtibleSummary;
+
   submittedAt: string;
 }
 
@@ -299,6 +311,9 @@ export interface SubmissionInputs {
   chainsPriced: number;
   /** Omitted when the run's cost is not known, e.g. a result replayed from a checkpoint. */
   run?: RunCost;
+  /** Omitted when the backup could not be read; never guessed. */
+  epicResearch?: EpicResearchSummary | null;
+  colleggtibles?: ColleggtibleSummary | null;
   /** Injectable so tests are not clock-dependent. */
   now?: number;
 }
@@ -355,6 +370,8 @@ export function buildSubmission(i: SubmissionInputs): Submission {
     // Spread so an absent run cost leaves the key off entirely. `run: undefined` would serialise
     // to nothing anyway, but the collector distinguishes "absent" from "present and empty".
     ...(i.run ? { run: roundRunCost(i.run) } : {}),
+    ...(i.epicResearch ? { epicResearch: i.epicResearch } : {}),
+    ...(i.colleggtibles ? { colleggtibles: i.colleggtibles } : {}),
     submittedAt: new Date(i.now ?? Date.now()).toISOString(),
   };
 }

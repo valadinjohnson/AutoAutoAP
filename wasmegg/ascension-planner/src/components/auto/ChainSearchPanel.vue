@@ -947,7 +947,7 @@
 
       <!-- Runners-up. Picked for SPREAD, not the raw top N: a descent sweep leaves the same plan
            nudged by one TE all over the cache, and ten of those is a useless menu. -->
-      <div v-if="store.shortlist.length > 1" class="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+      <div v-if="store.pricedChains.length > 1" class="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
         <div class="flex items-center justify-between gap-3">
           <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">
             Other options worth considering
@@ -990,7 +990,19 @@
 
         <p class="text-[11px] text-slate-500 leading-relaxed">{{ activeView?.hint }}</p>
 
-        <div class="overflow-x-auto">
+        <!-- A single-axis sweep prices dozens of chains that are all the same plan nudged by a few
+             TE, so "A good mix" can legitimately have nothing to add beyond the leader. The whole
+             section used to vanish in that case, which reads as a bug rather than as an answer. -->
+        <p
+          v-if="store.shortlist.length <= 1"
+          class="text-[11px] text-slate-500 leading-relaxed rounded-lg border border-slate-200 bg-slate-50 p-3"
+        >
+          Nothing else here is a genuinely different plan: every other chain this run priced is the same shape moved by
+          a few TE, or more than five days behind. That is normal for a run that only swept one checkpoint, and for one
+          stopped early. Switch to <span class="font-semibold">Fastest</span> to see all
+          {{ store.pricedChains.length }} of them in raw order.
+        </p>
+        <div v-else class="overflow-x-auto">
           <table class="w-full text-xs">
             <thead>
               <tr class="text-[9px] font-black text-slate-400 uppercase tracking-widest text-left">

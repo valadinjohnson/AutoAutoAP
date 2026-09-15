@@ -52,6 +52,9 @@ const MAX = {
   LEGS: 64,
   ARTIFACTS: 64,
   STONES: 64,
+  /** Items listed in an epic-research or colleggtible summary. The app already caps at 12; this
+   *  is the receiver refusing to take a longer list from a client that did not. */
+  PROGRESSION: 16,
   /** Timezone, effort, window, the two local stamps. */
   TEXT: 64,
   NICKNAME: 40,
@@ -173,6 +176,37 @@ function runCost(r) {
   return { workers, cores, minutes, secondsPerChain: perChain };
 }
 
+/** Epic research summary, re-bounded. */
+function epicResearch(e) {
+  if (!e || typeof e !== 'object') return undefined;
+  const total = num(e.total);
+  const atMax = num(e.atMax);
+  if (total === undefined || atMax === undefined) return undefined;
+  if (total < 0 || total > 200 || atMax < 0 || atMax > total) return undefined;
+  return {
+    maxed: flag(e.maxed),
+    atMax,
+    total,
+    short: Array.isArray(e.short) ? e.short.slice(0, MAX.PROGRESSION).map(x => text(x, MAX.TEXT) ?? '') : [],
+  };
+}
+
+/** Colleggtible summary, re-bounded. `byTier` is five fixed buckets: none, then T1-T4. */
+function colleggtibles(c) {
+  if (!c || typeof c !== 'object') return undefined;
+  const total = num(c.total);
+  if (total === undefined || total < 0 || total > 200) return undefined;
+  if (!Array.isArray(c.byTier) || c.byTier.length !== 5) return undefined;
+  const byTier = c.byTier.map(v => num(v));
+  if (byTier.some(v => v === undefined || v < 0 || v > 200)) return undefined;
+  return {
+    maxed: flag(c.maxed),
+    byTier,
+    total,
+    short: Array.isArray(c.short) ? c.short.slice(0, MAX.PROGRESSION).map(x => text(x, MAX.TEXT) ?? '') : [],
+  };
+}
+
 function pickSubmission(s) {
   return defined({
     schema: SCHEMA,
@@ -211,6 +245,12 @@ function pickSubmission(s) {
     // desktop at everybody. Absent from older clients and from checkpoint replays, and `defined`
     // drops the key entirely in that case rather than storing a zeroed row.
     run: runCost(s.run),
+
+    // Additive in schema 3. Already summarised by the app (max / how many short / a short list),
+    // and re-bounded here anyway: the list is what a brand-new account would otherwise post its
+    // whole research tree through.
+    epicResearch: epicResearch(s.epicResearch),
+    colleggtibles: colleggtibles(s.colleggtibles),
 
     legs: Array.isArray(s.legs)
       ? s.legs.slice(0, MAX.LEGS).map(l =>

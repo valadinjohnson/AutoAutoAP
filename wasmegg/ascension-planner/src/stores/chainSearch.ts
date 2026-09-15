@@ -46,6 +46,9 @@ import { buildSubmission, scrubIdentifiers, submissionFilename, type Submission 
 import { describeAvailability, isConstrained, type Availability } from '@/search/availability';
 import { missedMilestones, usableMilestones, type Milestone } from '@/search/milestones';
 import { defaultSeedChain, seedChainIssue, usableCheckpoints, fitSeedToLimits } from '@/search/seedChain';
+import { summariseEpicResearch, summariseColleggtibles } from '@/search/progression';
+import { epicResearchDefs } from '@/lib/epicResearch';
+import { getColleggtibleTiers } from 'lib/collegtibles';
 import {
   getArtifactLoadoutFromBackup,
   getOptimalEarningsSet,
@@ -624,6 +627,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
   function buildRunSubmission(nickname?: string): Submission | null {
     if (!bestChain.value.length || bestDays.value <= 0) return null;
     const inv = readInventory();
+    const initialStateStore = useInitialStateStore();
     return buildSubmission({
       nickname,
       chain: [...bestChain.value],
@@ -646,6 +650,19 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       // Null for a checkpoint replay, and left off entirely in that case, so the board never reads
       // "0 minutes for 400 chains" as a very fast machine.
       ...(runCost.value ? { run: runCost.value } : {}),
+      // Read straight off the loaded backup. Null when there is no backup to read, never guessed:
+      // "all maxed" asserted for an account nobody looked at would be worse than saying nothing.
+      epicResearch: summariseEpicResearch(
+        epicResearchDefs.map(d => ({
+          id: d.id,
+          name: d.name,
+          level: initialStateStore.epicResearchLevels[d.id] ?? 0,
+          maxLevel: d.maxLevel,
+        }))
+      ),
+      colleggtibles: initialStateStore.rawBackup
+        ? summariseColleggtibles(getColleggtibleTiers(initialStateStore.rawBackup))
+        : null,
     });
   }
 

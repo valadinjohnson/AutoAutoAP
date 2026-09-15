@@ -82,6 +82,8 @@ const FULL = {
   stones: [{ label: 'T4 Tachyon stone', count: 40 }],
   legs: [{ te: 195, strategy: '2-sale-tier13', days: 70.2, peakDeliveryQph: 12.5 }],
   run: { workers: 12, cores: 20, minutes: 65.3, secondsPerChain: 2.36 },
+  epicResearch: { maxed: true, atMax: 36, total: 36, short: [] },
+  colleggtibles: { maxed: false, byTier: [4, 0, 1, 2, 7], total: 14, short: ['carbon T3'] },
   chainsPriced: 11000,
   submittedAt: '2026-09-13T23:00:00.000Z',
 };
@@ -413,5 +415,41 @@ describe('run cost', () => {
   it('stores nothing at all when the sender omits it', async () => {
     await post('/submit', { ...MINIMAL });
     expect('run' in stored()[0][1]).toBe(false);
+  });
+});
+
+describe('progression summaries', () => {
+  it('stores epic research and colleggtible summaries', async () => {
+    await post('/submit', {
+      ...MINIMAL,
+      epicResearch: { maxed: true, atMax: 36, total: 36, short: [] },
+      colleggtibles: { maxed: false, byTier: [4, 0, 1, 2, 7], total: 14, short: ['carbon T3'] },
+    });
+    const row = stored()[0][1];
+    expect(row.epicResearch).toEqual({ maxed: true, atMax: 36, total: 36, short: [] });
+    expect(row.colleggtibles.byTier).toEqual([4, 0, 1, 2, 7]);
+  });
+
+  it('refuses a byTier that is not the five fixed buckets', async () => {
+    await post('/submit', { ...MINIMAL, colleggtibles: { maxed: false, byTier: [1, 2], total: 3, short: [] } });
+    expect(stored()[0][1].colleggtibles).toBeUndefined();
+  });
+
+  it('refuses an atMax larger than the total', async () => {
+    await post('/submit', { ...MINIMAL, epicResearch: { maxed: true, atMax: 99, total: 36, short: [] } });
+    expect(stored()[0][1].epicResearch).toBeUndefined();
+  });
+
+  it('truncates a short list a client failed to cap', async () => {
+    const short = Array.from({ length: 100 }, (_, i) => `r${i} 0/10`);
+    await post('/submit', { ...MINIMAL, epicResearch: { maxed: false, atMax: 0, total: 100, short } });
+    expect(stored()[0][1].epicResearch.short).toHaveLength(16);
+  });
+
+  it('stores neither when the sender omits them', async () => {
+    await post('/submit', { ...MINIMAL });
+    const row = stored()[0][1];
+    expect('epicResearch' in row).toBe(false);
+    expect('colleggtibles' in row).toBe(false);
   });
 });
