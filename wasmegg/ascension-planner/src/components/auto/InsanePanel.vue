@@ -58,7 +58,13 @@
 
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <label class="space-y-1">
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Final target TE</span>
+            <span class="flex items-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Final target TE</span>
+              <HelpTip
+                >The TE every chain ends at. It is appended to each chain automatically, so it never appears in the pool
+                below and never counts as a pool value.</HelpTip
+              >
+            </span>
             <input
               v-model.number="store.finalTE"
               type="number"
@@ -68,7 +74,12 @@
             />
           </label>
           <label class="space-y-1">
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Your TE now</span>
+            <span class="flex items-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Your TE now</span>
+              <HelpTip
+                >Read from your backup, not editable here. It is the floor for every checkpoint in the pool.</HelpTip
+              >
+            </span>
             <input
               :value="store.currentTE"
               type="number"
@@ -77,7 +88,13 @@
             />
           </label>
           <label class="space-y-1">
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Workers</span>
+            <span class="flex items-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Workers</span>
+              <HelpTip
+                >Background threads this browser will use, one less than your logical core count so the tab stays
+                responsive. Chains are dealt out across them; see "How the work is split" below.</HelpTip
+              >
+            </span>
             <input
               :value="store.workersInPool"
               type="number"
@@ -89,7 +106,13 @@
 
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <label class="space-y-1">
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Checkpoints from</span>
+            <span class="flex items-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Checkpoints from</span>
+              <HelpTip
+                >Lowest TE the search may use as an intermediate checkpoint. Anything at or below your current TE is
+                dropped: you cannot ascend to a target you have already passed.</HelpTip
+              >
+            </span>
             <input
               v-model.number="rangeLo"
               type="number"
@@ -99,7 +122,13 @@
             />
           </label>
           <label class="space-y-1">
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">to</span>
+            <span class="flex items-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">to</span>
+              <HelpTip
+                >Highest TE the search may use as an intermediate checkpoint. Nothing at or above the final target is
+                kept, since that is the target itself.</HelpTip
+              >
+            </span>
             <input
               v-model.number="rangeHi"
               type="number"
@@ -109,7 +138,16 @@
             />
           </label>
           <label class="space-y-1">
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">every N TE (step)</span>
+            <span class="flex items-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">every N TE (step)</span>
+              <HelpTip
+                >How finely the range is sampled. Step 15 over 185 to 390 gives 185, 200, 215 and so on: 14 values. Step
+                is the single most expensive number on this page, because the chain count is combinatorial in the pool
+                size, not linear. Over 185 to 390 at 5 to 7 ascensions: step 25 is 336 chains, step 15 is 6,006, step 10
+                is 80,598, step 5 is 6.2 million, and step 1 is about 102 billion. Halving the step does not double the
+                work.</HelpTip
+              >
+            </span>
             <input
               v-model.number="rangeStep"
               type="number"
@@ -122,8 +160,12 @@
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <label class="space-y-1">
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">
-              Fewest ascensions
+            <span class="flex items-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Fewest ascensions</span>
+              <HelpTip
+                >Shortest chain to enumerate, counting the final target. 5 ascensions takes four values from the pool
+                plus the target. Each ascension is a full rebuild: twelve shifts and a fresh research grind.</HelpTip
+              >
             </span>
             <input
               v-model.number="minAsc"
@@ -134,7 +176,13 @@
             />
           </label>
           <label class="space-y-1">
-            <span class="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Most ascensions</span>
+            <span class="flex items-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Most ascensions</span>
+              <HelpTip
+                >Longest chain to enumerate. Every length between fewest and most is enumerated in full, so widening
+                this adds whole combinatorial layers rather than a few chains.</HelpTip
+              >
+            </span>
             <input
               v-model.number="maxAsc"
               type="number"
@@ -158,23 +206,48 @@
       >
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
           <div>
-            <div class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Pool values</div>
+            <div class="flex items-center justify-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Pool values</span>
+              <HelpTip
+                >Checkpoint values left after the range is sampled by step and anything outside (your TE, target) is
+                dropped. This is the number the chain count is combinatorial in.</HelpTip
+              >
+            </div>
             <div class="text-lg font-black text-slate-900 tabular-nums">{{ poolSize }}</div>
           </div>
           <div>
-            <div class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Chains</div>
+            <div class="flex items-center justify-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Chains</span>
+              <HelpTip
+                >Every strictly-increasing combination of pool values at each allowed ascension count, with the target
+                appended. Computed combinatorially, never by building the list: at small steps the list would not fit in
+                memory, and saying so before that happens is the point.</HelpTip
+              >
+            </div>
             <div class="text-lg font-black tabular-nums" :class="tooBig ? 'text-red-700' : 'text-slate-900'">
               {{ chainCountLabel }}
             </div>
           </div>
           <div>
-            <div class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Est. wall clock</div>
+            <div class="flex items-center justify-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Est. wall clock</span>
+              <HelpTip
+                >Chains x 15 s / workers. It errs high on purpose: 15 s is the measured floor for a leg with a warm
+                prefix memo, and prefix sharing means most chains cost far less than a full simulation.</HelpTip
+              >
+            </div>
             <div class="text-lg font-black tabular-nums" :class="tooBig ? 'text-red-700' : 'text-slate-900'">
               {{ estimateLabel }}
             </div>
           </div>
           <div>
-            <div class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Assumed cost</div>
+            <div class="flex items-center justify-center gap-1.5">
+              <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Assumed cost</span>
+              <HelpTip
+                >The 15 s per chain the estimate assumes. Your real figure appears under the progress bar once the first
+                chunk lands, measured on this machine.</HelpTip
+              >
+            </div>
             <div class="text-lg font-black text-slate-900 tabular-nums">15 s</div>
           </div>
         </div>
@@ -195,6 +268,46 @@
           </template>
         </p>
       </div>
+
+      <!-- The question everyone asks before committing a machine for an afternoon. -->
+      <details class="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        <summary
+          class="px-4 py-3 cursor-pointer text-[10px] font-black text-slate-600 uppercase tracking-widest hover:bg-slate-50"
+        >
+          How the work is split
+        </summary>
+        <div class="px-4 pb-4 space-y-3 text-[11px] text-slate-600 leading-relaxed">
+          <p>
+            <span class="font-bold text-slate-800">Chains are sorted so relatives sit together.</span> Every chain
+            starting <code class="font-mono-premium">195 229</code> is adjacent to every other one, because the
+            expensive unit is not a chain, it is a <span class="font-semibold">leg</span>. Two chains sharing their
+            first three checkpoints share those three leg simulations exactly.
+          </p>
+          <p>
+            <span class="font-bold text-slate-800"
+              >The sorted list is cut into chunks of {{ store.workersInPool * 2 }}</span
+            >
+            (workers × 2) and handed to the pool one chunk at a time. The pool splits each chunk across workers by
+            prefix, so a worker gets a family of related chains rather than a random handful, and its memo pays.
+          </p>
+          <p>
+            <span class="font-bold text-slate-800">Each worker simulates legs and remembers them.</span> A leg is a full
+            farm simulation: research purchases, hab and vehicle upgrades, twelve egg switches, sale timing. That is the
+            ~15 s. A chain whose prefix the worker has already priced only pays for its new legs, which is why the real
+            cost lands well under the estimate.
+          </p>
+          <p>
+            <span class="font-bold text-slate-800">Progress is a heartbeat, not a guess.</span> Each worker posts after
+            every chain it finishes, so the bar moves continuously and a worker that has died is distinguishable from
+            one that is thinking. The s/chain figure under the bar is measured here, not carried from another machine.
+          </p>
+          <p>
+            <span class="font-bold text-slate-800">Stop is checked between chunks.</span> A chunk in flight finishes
+            first, so on a space with long chains "Stopping…" can sit for a minute or two. Nothing is lost: everything
+            priced so far stays, and the best of it is your answer.
+          </p>
+        </div>
+      </details>
 
       <div class="flex flex-wrap gap-3">
         <button
@@ -365,6 +478,7 @@ import { useChainSearchStore } from '@/stores/chainSearch';
 import { buildPool, countChains, estimateHours, formatHours } from '@/search/exhaustive';
 import { MAX_RUNS } from '@/search/runLibrary';
 import SearchShapeChart from './charts/SearchShapeChart.vue';
+import HelpTip from './HelpTip.vue';
 
 const props = defineProps<{ playerId: string }>();
 const store = useChainSearchStore();
