@@ -526,7 +526,7 @@
         <button
           type="button"
           class="px-4 py-2 rounded-lg bg-slate-800 text-white text-[10px] font-black uppercase tracking-widest hover:bg-slate-700"
-          @click="store.exportCsv()"
+          @click="downloadCsv"
         >
           Download CSV
         </button>
@@ -590,6 +590,15 @@ import {
 import { MAX_RUNS } from '@/search/runLibrary';
 import SearchShapeChart from './charts/SearchShapeChart.vue';
 import HelpTip from './HelpTip.vue';
+import { downloadFile } from '@/utils/export';
+
+/**
+ * `exportCsv()` builds the text and hands it back; it does not save anything. This panel used to
+ * call it straight from the click handler, which built the whole CSV and dropped it on the floor.
+ */
+function downloadCsv(): void {
+  downloadFile(store.csvFilename(), store.exportCsv(), 'text/csv;charset=utf-8');
+}
 
 const props = defineProps<{ playerId: string }>();
 const store = useChainSearchStore();
