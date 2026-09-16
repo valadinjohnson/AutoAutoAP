@@ -310,3 +310,118 @@ export function parseBands(text: string, defaultStep = 5): number[][] {
     .map(part => parseBand(part, defaultStep))
     .filter(b => b.length);
 }
+
+/* ------------------------------------------------------------------------------------------- *
+ * Suggested bands, measured
+ *
+ * Where the near-best chains in this project's corpus actually put each checkpoint, expressed as a
+ * fraction of the journey from current TE to the target. Derived from ten community CSVs covering
+ * seven accounts and 21,667 priced chains, taking every chain within 2% of its run's best at that
+ * ascension count, then the median per run and the min/max ACROSS runs. Weighted per run rather
+ * than per chain on purpose: one 6,872-chain file would otherwise define the answer by itself.
+ *
+ * WHY THIS IS 490-ONLY, AND NOT A LAW. The pattern does not transfer across targets. On 490 the
+ * last checkpoint sits at 0.42-0.63 of the journey; on 300, measured on three independent runs, it
+ * sits at 0.80-0.86. In absolute terms that is `final - 150ish` for 490 and `final - 25..35` for
+ * 300. Neither a fixed offset nor a fixed fraction describes both, so suggesting 490's shape for a
+ * 300 target would be worse than suggesting nothing.
+ *
+ * AND THE BIGGER CAVEAT. These chains come from STAGED searches, which explore a neighbourhood
+ * around a seed. So this is where good chains were FOUND, which is not the same as where good
+ * chains ARE. Bands built from it can inherit the search's own blind spot. They are a way to spend
+ * a fixed budget on the region that has paid before, not evidence that nothing else pays.
+ */
+
+/** Targets these fractions were measured on. Outside this, `suggestBands` declines. */
+export const SUGGESTION_TARGET_RANGE: [number, number] = [420, 560];
+
+interface BandTable {
+  /** `[lo, hi]` fraction of the journey, one per intermediate checkpoint. */
+  bands: [number, number][];
+  runs: number;
+  accounts: number;
+}
+
+const MEASURED_BANDS: Record<number, BandTable> = {
+  5: {
+    bands: [
+      [0.024, 0.169],
+      [0.175, 0.241],
+      [0.288, 0.422],
+      [0.418, 0.553],
+    ],
+    runs: 6,
+    accounts: 4,
+  },
+  6: {
+    bands: [
+      [0.042, 0.096],
+      [0.163, 0.169],
+      [0.241, 0.314],
+      [0.353, 0.407],
+      [0.486, 0.539],
+    ],
+    runs: 5,
+    accounts: 3,
+  },
+  7: {
+    bands: [
+      [0.024, 0.096],
+      [0.163, 0.169],
+      [0.223, 0.241],
+      [0.314, 0.343],
+      [0.387, 0.473],
+      [0.424, 0.548],
+    ],
+    runs: 4,
+    accounts: 2,
+  },
+};
+
+export interface BandSuggestion {
+  /** Rendered for the bands box, e.g. `186-232:5; 230-232:5; ...`. */
+  text: string;
+  bands: number[][];
+  runs: number;
+  accounts: number;
+  /** Widening applied either side, as a fraction of the journey. */
+  margin: number;
+}
+
+/**
+ * Bands for this account and ascension count, or null when the corpus cannot support a suggestion.
+ *
+ * `margin` widens each measured band either side, because the corpus is small and its extremes are
+ * not the true extremes. 0.06 of the journey is about 19 TE on a 179-to-490 run: enough to cover a
+ * checkpoint the corpus happens not to contain, without reopening the whole range.
+ */
+export function suggestBands(
+  currentTE: number,
+  finalTE: number,
+  ascensions: number,
+  step = 5,
+  margin = 0.06
+): BandSuggestion | null {
+  const table = MEASURED_BANDS[Math.floor(ascensions)];
+  if (!table) return null;
+  if (finalTE < SUGGESTION_TARGET_RANGE[0] || finalTE > SUGGESTION_TARGET_RANGE[1]) return null;
+  const span = finalTE - currentTE;
+  if (!(span > 0)) return null;
+
+  const parts: string[] = [];
+  const bands: number[][] = [];
+  for (const [lo, hi] of table.bands) {
+    const a = Math.max(currentTE + 1, Math.round(currentTE + Math.max(0, lo - margin) * span));
+    const b = Math.min(finalTE - 1, Math.round(currentTE + Math.min(1, hi + margin) * span));
+    if (b < a) return null;
+    const values: number[] = [];
+    for (let v = a; v <= b; v += step) values.push(v);
+    if (!values.length) return null;
+    bands.push(values);
+    parts.push(`${a}-${b}:${step}`);
+  }
+  return { text: parts.join('; '), bands, runs: table.runs, accounts: table.accounts, margin };
+}
+
+/** Ascension counts the corpus can suggest for. */
+export const SUGGESTABLE_ASCENSIONS = Object.keys(MEASURED_BANDS).map(Number);

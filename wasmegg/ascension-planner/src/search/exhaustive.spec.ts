@@ -13,6 +13,8 @@ import {
   parseBand,
   parseBands,
   SMALLEST_MEASURED_GAP,
+  suggestBands,
+  SUGGESTION_TARGET_RANGE,
 } from './exhaustive';
 
 describe('buildPool', () => {
@@ -282,5 +284,68 @@ describe('parseBand / parseBands', () => {
     expect(bands[0]).toEqual([185, 190, 195, 200]);
     expect(bands[1]).toEqual([210, 220, 230, 240]);
     expect(bands[2]).toEqual([250, 270, 290]);
+  });
+});
+
+describe('suggestBands', () => {
+  it('suggests bands that scale with the account, not fixed TE values', () => {
+    const a = suggestBands(179, 490, 6);
+    const b = suggestBands(100, 490, 6);
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    // Same fractions, different journeys, so the absolute bands must differ.
+    expect(a!.text).not.toBe(b!.text);
+    expect(a!.bands).toHaveLength(5);
+    expect(b!.bands).toHaveLength(5);
+  });
+
+  it('produces one band per intermediate checkpoint, so N ascensions gives N-1 boxes', () => {
+    expect(suggestBands(179, 490, 5)!.bands).toHaveLength(4);
+    expect(suggestBands(179, 490, 6)!.bands).toHaveLength(5);
+    expect(suggestBands(179, 490, 7)!.bands).toHaveLength(6);
+  });
+
+  it('keeps every band inside the reachable range', () => {
+    const s = suggestBands(179, 490, 6)!;
+    for (const band of s.bands) {
+      for (const v of band) {
+        expect(v).toBeGreaterThan(179);
+        expect(v).toBeLessThan(490);
+      }
+    }
+  });
+
+  it('produces bands that ascend', () => {
+    const s = suggestBands(179, 490, 6)!;
+    for (let i = 1; i < s.bands.length; i++) {
+      expect(s.bands[i][0]).toBeGreaterThan(s.bands[i - 1][0]);
+    }
+  });
+
+  it('declines on a target the corpus never measured', () => {
+    // On 300 the last checkpoint sits at 0.80-0.86 of the journey against 0.42-0.63 on 490.
+    // Suggesting 490's shape there would be worse than suggesting nothing.
+    expect(suggestBands(125, 300, 6)).toBeNull();
+    expect(suggestBands(179, SUGGESTION_TARGET_RANGE[1] + 1, 6)).toBeNull();
+  });
+
+  it('declines on an ascension count the corpus cannot support', () => {
+    expect(suggestBands(179, 490, 4)).toBeNull();
+    expect(suggestBands(179, 490, 9)).toBeNull();
+  });
+
+  it('declines rather than inverting when the account has already passed the target', () => {
+    expect(suggestBands(500, 490, 6)).toBeNull();
+  });
+
+  it('carries its own provenance, so the UI can say how thin the evidence is', () => {
+    const s = suggestBands(179, 490, 7)!;
+    expect(s.accounts).toBeGreaterThan(0);
+    expect(s.runs).toBeGreaterThanOrEqual(s.accounts);
+  });
+
+  it('parses back into the bands it claims', () => {
+    const s = suggestBands(179, 490, 6)!;
+    expect(parseBands(s.text)).toEqual(s.bands);
   });
 });

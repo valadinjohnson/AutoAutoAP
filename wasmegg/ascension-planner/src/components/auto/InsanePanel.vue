@@ -193,6 +193,32 @@
               placeholder="185-200:5; 210-240:10; 250-290:20"
               class="w-full rounded-lg border-slate-300 text-sm font-mono-premium font-bold text-slate-800 disabled:opacity-50"
             />
+            <div class="flex flex-wrap items-center gap-2 pt-1">
+              <label class="flex items-center gap-1.5 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                Ascensions
+                <input
+                  v-model.number="suggestAsc"
+                  type="number"
+                  min="5"
+                  max="7"
+                  :disabled="store.isRunning"
+                  class="w-16 rounded-md border-slate-300 text-xs font-bold text-slate-800 disabled:opacity-50"
+                />
+              </label>
+              <button
+                type="button"
+                :disabled="store.isRunning || !suggestion"
+                class="px-3 py-1.5 rounded-md bg-slate-800 text-white text-[10px] font-black uppercase tracking-widest hover:bg-slate-700 disabled:opacity-40"
+                @click="applySuggestion"
+              >
+                Suggest from measured runs
+              </button>
+              <span v-if="suggestion" class="text-[10px] text-slate-500">
+                {{ suggestAsc }} ascensions, from {{ suggestion.runs }} runs across {{ suggestion.accounts }} accounts
+              </span>
+              <span v-else class="text-[10px] text-amber-700"> No suggestion for this target or ascension count. </span>
+            </div>
+
             <span class="block text-[10px] text-slate-400">
               <template v-if="bands.length">
                 {{ bands.length }} bands -> {{ bands.length + 1 }} ascensions ·
@@ -556,6 +582,8 @@ import {
   countChainsWithGap,
   countBanded,
   parseBands,
+  suggestBands,
+  SUGGESTION_TARGET_RANGE,
   estimateHours,
   formatHours,
 } from '@/search/exhaustive';
@@ -574,6 +602,24 @@ const TOO_BIG_HOURS = 24 * 14;
 const spaceMode = ref<'pool' | 'bands'>('pool');
 const bandsText = ref('185-200:5; 215-245:10; 260-300:10; 320-360:20');
 const minGap = ref(0);
+
+/** Ascension count the suggestion is built for. Bands fix the count, so this picks how many boxes. */
+const suggestAsc = ref(6);
+
+/**
+ * Bands from the measured corpus, or null when it cannot support one.
+ *
+ * Deliberately not auto-applied. It narrows the space, and the whole value of this mode is that an
+ * unconstrained run proves something; taking that away should be a decision, not a default.
+ */
+const suggestion = computed(() => suggestBands(store.currentTE, store.finalTE, suggestAsc.value));
+
+function applySuggestion(): void {
+  const s = suggestion.value;
+  if (!s) return;
+  bandsText.value = s.text;
+  spaceMode.value = 'bands';
+}
 
 const rangeLo = ref(185);
 const rangeHi = ref(390);
