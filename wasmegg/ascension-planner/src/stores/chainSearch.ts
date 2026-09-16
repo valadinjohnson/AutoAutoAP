@@ -918,6 +918,22 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
    * Progress, cache, best-so-far and the stop button are the same state the staged search writes,
    * so every results panel works unchanged.
    */
+  /** Best priced chain in `liveCache`, pushed into the fields the panels read. */
+  function noteBest(): void {
+    let bestSeconds = Infinity;
+    let bestEntry: CacheEntry | null = null;
+    for (const e of liveCache) {
+      if (e.seconds > 0 && e.seconds < bestSeconds) {
+        bestSeconds = e.seconds;
+        bestEntry = e;
+      }
+    }
+    if (!bestEntry) return;
+    bestChain.value = bestEntry.key.split(',').map(Number);
+    bestDays.value = bestEntry.seconds / 86400;
+    bestLegs.value = bestEntry.legs;
+  }
+
   async function startExhaustive(
     playerId: string,
     spec: {
@@ -996,10 +1012,38 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     stage.value = 'starting workers';
     detail.value = '';
 
+    // Checkpointing, which this path did without for one release and should not have. An exhaustive
+    // over a banded space is a six-to-eight hour commitment; the first version kept every priced
+    // chain in memory and wrote nothing until the operator pressed Save, so an unattended machine
+    // that restarted lost the lot. The staged search has always checkpointed on a timer. This now
+    // does the same, and replays what it finds instead of re-simulating it.
+    let alreadyPriced = new Map<string, CacheEntry>();
     try {
       partitionHash = await hashID(playerId);
+      runFingerprint = fingerprint(playerId);
+      const saved = await loadCheckpoint(partitionHash, runFingerprint);
+      if (saved) {
+        for (const e of restoreEntries(saved)) if (e.seconds > 0) alreadyPriced.set(e.key, e);
+      }
     } catch (e) {
       console.warn('chain search: could not prepare storage', e);
+    }
+
+    // Replay before pricing: a chain already in the checkpoint costs nothing to carry forward, and
+    // the counter has to include it or a resumed run looks like it lost its progress.
+    const toPrice: number[][] = [];
+    for (const chain of chains) {
+      const hit = alreadyPriced.get(chain.join(','));
+      if (hit) liveCache.push(hit);
+      else toPrice.push(chain);
+    }
+    chainsReplayed.value = liveCache.length;
+    chainsDone.value = liveCache.length;
+    csvRows.value = liveCache.length;
+    if (chainsReplayed.value) {
+      runLog.value.push(`replayed ${chainsReplayed.value.toLocaleString()} chains from a previous run`);
+      noteBest();
+      refreshShortlist(true);
     }
 
     try {
@@ -1022,35 +1066,26 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       // (the pool splits a batch by prefix internally) while checking the stop flag four times as
       // often, at the cost of a little prefix sharing across chunk boundaries.
       const chunk = Math.max(pool.size * 2, 32);
-      for (let i = 0; i < chains.length && !stopRequested.value; i += chunk) {
-        const slice = chains.slice(i, i + chunk);
+      for (let i = 0; i < toPrice.length && !stopRequested.value; i += chunk) {
+        const slice = toPrice.slice(i, i + chunk);
         const { results } = await pool.evaluate(slice, noteBatch);
         for (const r of results) liveCache.push({ key: r.chain.join(','), seconds: r.seconds, legs: r.legs });
 
-        chainsDone.value = Math.min(i + chunk, chains.length);
+        chainsDone.value = chainsReplayed.value + Math.min(i + chunk, toPrice.length);
         csvRows.value = liveCache.length;
         noteRate(chainsDone.value);
-
-        let bestSeconds = Infinity;
-        let bestEntry: CacheEntry | null = null;
-        for (const e of liveCache) {
-          if (e.seconds > 0 && e.seconds < bestSeconds) {
-            bestSeconds = e.seconds;
-            bestEntry = e;
-          }
-        }
-        if (bestEntry) {
-          bestChain.value = bestEntry.key.split(',').map(Number);
-          bestDays.value = bestEntry.seconds / 86400;
-          bestLegs.value = bestEntry.legs;
-        }
+        noteBest();
         detail.value = `${chainsDone.value.toLocaleString()} / ${chains.length.toLocaleString()}`;
         refreshShortlist();
+        // On the checkpoint timer, not every chunk. Losing at most a few minutes of pricing to a
+        // crash is the trade; losing eight hours is not.
+        void persist(liveCache);
       }
 
       stoppedEarly.value = stopRequested.value;
       stage.value = stopRequested.value ? 'stopped' : 'done';
       refreshShortlist(true);
+      await persist(liveCache, true, !stopRequested.value);
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
       stage.value = 'failed';
