@@ -343,20 +343,21 @@ interface BandTable {
 }
 
 const MEASURED_BANDS: Record<number, BandTable> = {
-  // 2-4 come from one exhaustive sweep each (180 -> 490, one account, 2026-09-16), so they are
-  // proven optima of their own space rather than the found-here sample the 5-7 tables are built
-  // from. Narrower for that reason, and on a single account they should be read as such.
+  // 2-4 come from exhaustive sweeps (180 -> 490, one account), so they are proven optima of their
+  // own space rather than the found-here sample the 5-7 tables are built from. 2 and 3 were then
+  // re-measured at step 1 -- every integer TE, no grid at all -- which is the strongest evidence in
+  // this table and the reason they moved: a step-5 grid can only ever report multiples of 5.
   2: {
-    bands: [[0.255, 0.374]],
-    runs: 1,
+    bands: [[0.281, 0.365]],
+    runs: 2,
     accounts: 1,
   },
   3: {
     bands: [
-      [0.068, 0.165],
-      [0.323, 0.435],
+      [0.052, 0.155],
+      [0.306, 0.426],
     ],
-    runs: 1,
+    runs: 2,
     accounts: 1,
   },
   4: {

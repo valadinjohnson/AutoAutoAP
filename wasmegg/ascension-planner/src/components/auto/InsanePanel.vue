@@ -199,8 +199,8 @@
                 <input
                   v-model.number="suggestAsc"
                   type="number"
-                  min="5"
-                  max="7"
+                  :min="suggestRange[0]"
+                  :max="suggestRange[1]"
                   :disabled="store.isRunning"
                   class="w-16 rounded-md border-slate-300 text-xs font-bold text-slate-800 disabled:opacity-50"
                 />
@@ -582,7 +582,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useChainSearchStore } from '@/stores/chainSearch';
 import { useAutoPlannerStore } from '@/stores/autoPlanner';
 import {
@@ -593,6 +593,7 @@ import {
   parseBands,
   suggestBands,
   SUGGESTION_TARGET_RANGE,
+  SUGGESTABLE_ASCENSIONS,
   estimateHours,
   formatHours,
 } from '@/search/exhaustive';
@@ -719,6 +720,12 @@ const livePercent = computed(() =>
  * runs the real figure has landed anywhere from 0.66 to 3.2 s, which is the difference between an
  * estimate that means something and one that is off by a factor of twenty.
  */
+/** The ascension counts the measured corpus can actually speak to, not a hardcoded 5-7. */
+const suggestRange = computed<[number, number]>(() => [
+  Math.min(...SUGGESTABLE_ASCENSIONS),
+  Math.max(...SUGGESTABLE_ASCENSIONS),
+]);
+
 const measuredCost = computed(() => (store.secondsPerChain > 0 ? store.secondsPerChain : 0));
 
 const hours = computed(() =>
@@ -726,14 +733,35 @@ const hours = computed(() =>
 );
 
 /**
- * While a run is going, the number people want is how much is LEFT, not what the whole thing was
- * once predicted to cost. Both are computed at the measured rate.
+ * Once a run is going, project from what it has ACTUALLY done: elapsed x remaining / done. That
+ * needs no view on how many workers are busy or what a chain "should" cost, and it self-corrects
+ * as prefix sharing warms up. The s/chain figure cannot be used for this -- it is wall-clock per
+ * chain across the whole pool already, so feeding it to estimateHours divides by the workers a
+ * second time and the answer comes out wrong by roughly the worker count.
  */
-const remainingHours = computed(() =>
-  estimateHours(Math.max(0, store.chainsEstimated - pricedSoFar.value), store.workersInPool, measuredCost.value || undefined)
+const tick = ref(Date.now());
+let ticker: ReturnType<typeof setInterval> | null = null;
+watch(
+  () => store.isRunning,
+  running => {
+    if (ticker) clearInterval(ticker);
+    ticker = running ? setInterval(() => (tick.value = Date.now()), 1000) : null;
+  }
 );
+onUnmounted(() => ticker && clearInterval(ticker));
+
+const remainingHours = computed(() => {
+  const done = pricedSoFar.value;
+  const left = Math.max(0, store.chainsEstimated - done);
+  if (!store.runStartedAt || done <= 0) return Infinity;
+  const elapsedHours = (tick.value - store.runStartedAt) / 3600000;
+  if (!(elapsedHours > 0)) return Infinity;
+  return (elapsedHours / done) * left;
+});
 const estimateLabel = computed(() => {
-  if (store.isRunning && measuredCost.value) return formatHours(remainingHours.value) + ' left';
+  if (store.isRunning && Number.isFinite(remainingHours.value)) {
+    return formatHours(remainingHours.value) + ' left';
+  }
   return chainCount.value ? formatHours(hours.value) : '—';
 });
 const tooBig = computed(() => chainCount.value > 0 && hours.value > TOO_BIG_HOURS);

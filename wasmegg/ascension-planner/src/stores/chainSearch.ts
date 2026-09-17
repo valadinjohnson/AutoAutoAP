@@ -1434,6 +1434,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     stop,
     checkResumable,
     discardCheckpoint,
+    runStartedAt,
     exportCsv,
     buildRunSubmission,
     sendSubmission,
