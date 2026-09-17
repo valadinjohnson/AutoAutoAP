@@ -30,7 +30,7 @@
 // 2: `artifacts` became a list of labels (best piece per family) instead of `{label, count}` for
 // every tier owned; see src/search/submission.ts. Rows already in KV at schema 1 keep their old
 // shape and the page renders both -- a stored row is history, not something to migrate.
-const SCHEMA = 3;
+const SCHEMA = 4;
 
 /**
  * Schemas this Worker will accept, newest last.
@@ -45,7 +45,7 @@ const SCHEMA = 3;
  * than rejecting the run that produced it. The `schema` field is stored as sent, so a reader can
  * still tell which rows can have timing data and which cannot.
  */
-const ACCEPTED_SCHEMAS = new Set([2, 3]);
+const ACCEPTED_SCHEMAS = new Set([2, 3, 4]);
 
 /**
  * Bounds on everything countable.
@@ -70,6 +70,10 @@ const MAX = {
   /** Items listed in an epic-research or colleggtible summary. The app already caps at 12; this
    *  is the receiver refusing to take a longer list from a client that did not. */
   PROGRESSION: 16,
+  /** One band per checkpoint; a chain longer than this is not a chain anyone is planning. */
+  BAND_CHECKPOINTS: 32,
+  /** Values inside one band. A step-1 band over the whole TE range is a few hundred. */
+  BAND_VALUES: 1024,
   /** Timezone, effort, window, the two local stamps. */
   TEXT: 64,
   NICKNAME: 40,
@@ -190,7 +194,71 @@ function runCost(r) {
   if (minutes < 0 || minutes > 60 * 24 * 30) return undefined;
   if (perChain < 0 || perChain > 3600) return undefined;
   if (cores !== null && (cores === undefined || cores < 1 || cores > 256)) return undefined;
-  return { workers, cores, minutes, secondsPerChain: perChain };
+  const suspended = num(r.suspendedMinutes);
+  const stall = num(r.longestStallMinutes);
+  return {
+    workers,
+    cores,
+    minutes,
+    secondsPerChain: perChain,
+    // Run health. Optional, and clamped to the same month-long ceiling as `minutes`: a submission
+    // claiming a freeze longer than the run itself is telling us nothing we can use.
+    ...(suspended !== undefined && suspended >= 0 && suspended <= 60 * 24 * 30
+      ? { suspendedMinutes: suspended }
+      : {}),
+    ...(stall !== undefined && stall >= 0 && stall <= 60 * 24 * 30 ? { longestStallMinutes: stall } : {}),
+  };
+}
+
+/**
+ * The space an exhaustive run proved its answer over. Schema 4, Insane mode only.
+ *
+ * Bounded hard on both axes: the band list is per checkpoint and the values inside it are the TEs
+ * the panel enumerated, so a malformed or hostile submission could otherwise arrive as a very large
+ * nested array. Anything that does not parse is dropped rather than rejected, same as every other
+ * optional block here -- a submission is still worth keeping without its provenance.
+ */
+function searchSpace(sp) {
+  if (!sp || typeof sp !== 'object') return undefined;
+  const mode = sp.mode === 'bands' ? 'bands' : sp.mode === 'range' ? 'range' : undefined;
+  if (!mode) return undefined;
+  const chains = num(sp.chains);
+  const priced = num(sp.chainsPriced);
+  const minGap = num(sp.minGap);
+  const minAsc = num(sp.minAscensions);
+  const maxAsc = num(sp.maxAscensions);
+  if (chains === undefined || chains < 0 || chains > 1e12) return undefined;
+  if (minAsc === undefined || maxAsc === undefined || minAsc < 1 || maxAsc > 64 || maxAsc < minAsc) return undefined;
+
+  const out = {
+    mode,
+    minGap: minGap !== undefined && minGap >= 0 && minGap <= MAX.TE ? minGap : 0,
+    minAscensions: minAsc,
+    maxAscensions: maxAsc,
+    chains,
+    chainsPriced: priced !== undefined && priced >= 0 && priced <= chains ? priced : 0,
+    stoppedEarly: sp.stoppedEarly === true,
+  };
+
+  if (mode === 'range' && sp.range && typeof sp.range === 'object') {
+    const lo = num(sp.range.lo);
+    const hi = num(sp.range.hi);
+    const step = num(sp.range.step);
+    if (lo !== undefined && hi !== undefined && step !== undefined && step > 0 && hi >= lo && hi <= MAX.TE) {
+      out.range = { lo, hi, step };
+    }
+  }
+  if (mode === 'bands' && Array.isArray(sp.bands)) {
+    out.bands = sp.bands.slice(0, MAX.BAND_CHECKPOINTS).map(b =>
+      Array.isArray(b)
+        ? b
+            .slice(0, MAX.BAND_VALUES)
+            .map(v => num(v))
+            .filter(v => v !== undefined && v >= 0 && v <= MAX.TE)
+        : []
+    );
+  }
+  return out;
 }
 
 /** Epic research summary, re-bounded. */
@@ -270,6 +338,7 @@ function pickSubmission(s) {
     // whole research tree through.
     epicResearch: epicResearch(s.epicResearch),
     colleggtibles: colleggtibles(s.colleggtibles),
+    space: searchSpace(s.space),
 
     legs: Array.isArray(s.legs)
       ? s.legs.slice(0, MAX.LEGS).map(l =>

@@ -37,7 +37,7 @@ import type { LegSummary } from './types';
  *     tier owned. The Worker must be redeployed with the matching SCHEMA at the same time -- it
  *     refuses a schema it does not know, so an app shipped ahead of the collector submits
  *     nothing. */
-export const SUBMISSION_SCHEMA = 3;
+export const SUBMISSION_SCHEMA = 4;
 
 /**
  * The artifact families a virtue ascension can actually equip.
@@ -245,7 +245,46 @@ export interface Submission {
   epicResearch?: EpicResearchSummary;
   colleggtibles?: ColleggtibleSummary;
 
+  /**
+   * What space an exhaustive run actually covered. Added in schema 4, and only ever present on an
+   * Insane-mode submission.
+   *
+   * Without it an exhaustive result is indistinguishable from a staged one on the board, which
+   * throws away the only thing that makes it worth more: "proven optimum of 240-490 step 1 at two
+   * ascensions" is a claim that can be checked and reproduced, while "735 days" is a number. It
+   * also explains away differences that otherwise look like disagreement -- two runs finding
+   * different winners are not in conflict when one searched a box the other never entered.
+   */
+  space?: SearchSpace;
+
   submittedAt: string;
+}
+
+/** The box an exhaustive run proved its answer over. */
+export interface SearchSpace {
+  /** `range` is one pool shared by every checkpoint; `bands` is a separate range per checkpoint. */
+  mode: 'range' | 'bands';
+  /** Present when mode is `range`: the pool every checkpoint drew from. */
+  range?: { lo: number; hi: number; step: number };
+  /**
+   * Present when mode is `bands`: the values allowed at each checkpoint, in order, as the panel
+   * enumerated them. Stored as the values themselves rather than the typed `lo-hi:step` text so a
+   * reader does not have to re-implement the parser to know what was searched.
+   */
+  bands?: number[][];
+  /** Minimum TE between consecutive checkpoints. 0 means the enumeration was unconstrained. */
+  minGap: number;
+  /** Ascension bounds, inclusive, counting the final target. */
+  minAscensions: number;
+  maxAscensions: number;
+  /** Chains the space contains, and how many were priced before the run ended. */
+  chains: number;
+  chainsPriced: number;
+  /**
+   * True when the operator stopped it. The winner is then the best of what was priced and NOT the
+   * optimum of the space, which is the difference between a result and a proof.
+   */
+  stoppedEarly: boolean;
 }
 
 /** The cost side of a run, for calibrating the panel's estimates against real machines. */
@@ -261,6 +300,17 @@ export interface RunCost {
    * run measures it directly and a resumed run's replayed chains would otherwise skew the ratio.
    */
   secondsPerChain: number;
+  /**
+   * Minutes the browser had this tab suspended or throttled, already excluded from `minutes`.
+   *
+   * A backgrounded tab is throttled hard, and a run left overnight can spend more time frozen than
+   * working. Recorded rather than silently dropped so the board can tell a slow machine from an
+   * interrupted one -- and so a run with a long freeze can be weighted down instead of taken at
+   * face value. Absent on builds that did not measure it.
+   */
+  suspendedMinutes?: number;
+  /** The single longest freeze, in minutes. Many short stalls read very differently from one long one. */
+  longestStallMinutes?: number;
 }
 
 /**
@@ -310,6 +360,8 @@ export interface SubmissionInputs {
   earnings?: LoadoutSlot[];
   chainsPriced: number;
   /** Omitted when the run's cost is not known, e.g. a result replayed from a checkpoint. */
+  /** Only set by Insane mode; a staged run has no stated space to prove anything over. */
+  space?: SearchSpace;
   run?: RunCost;
   /** Omitted when the backup could not be read; never guessed. */
   epicResearch?: EpicResearchSummary | null;
@@ -325,6 +377,12 @@ function roundRunCost(r: RunCost): RunCost {
     cores: r.cores === null || !Number.isFinite(r.cores) ? null : Math.max(0, Math.round(r.cores)),
     minutes: Number(r.minutes.toFixed(1)),
     secondsPerChain: Number(r.secondsPerChain.toFixed(2)),
+    ...(r.suspendedMinutes !== undefined && Number.isFinite(r.suspendedMinutes)
+      ? { suspendedMinutes: Number(r.suspendedMinutes.toFixed(1)) }
+      : {}),
+    ...(r.longestStallMinutes !== undefined && Number.isFinite(r.longestStallMinutes)
+      ? { longestStallMinutes: Number(r.longestStallMinutes.toFixed(1)) }
+      : {}),
   };
 }
 
@@ -370,6 +428,7 @@ export function buildSubmission(i: SubmissionInputs): Submission {
     // Spread so an absent run cost leaves the key off entirely. `run: undefined` would serialise
     // to nothing anyway, but the collector distinguishes "absent" from "present and empty".
     ...(i.run ? { run: roundRunCost(i.run) } : {}),
+    ...(i.space ? { space: i.space } : {}),
     ...(i.epicResearch ? { epicResearch: i.epicResearch } : {}),
     ...(i.colleggtibles ? { colleggtibles: i.colleggtibles } : {}),
     submittedAt: new Date(i.now ?? Date.now()).toISOString(),

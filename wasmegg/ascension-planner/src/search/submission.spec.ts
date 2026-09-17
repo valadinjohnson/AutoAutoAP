@@ -287,6 +287,115 @@ describe('buildSubmission: run cost', () => {
   });
 
   it('bumps the schema so the collector can tell old submissions apart', () => {
-    expect(buildSubmission({ ...base }).schema).toBe(3);
+    expect(buildSubmission({ ...base }).schema).toBe(SUBMISSION_SCHEMA);
+  });
+});
+
+describe('buildSubmission: the space an exhaustive run covered', () => {
+  const base = {
+    chain: [195, 226, 277, 317, 490],
+    seconds: 758.9 * 86400,
+    legs: [],
+    planStart: 1_757_000_000,
+    timezone: 'UTC',
+    currentTE: 170,
+    finalTE: 490,
+    effort: 'balanced',
+    availability: null,
+    holdShifts: false,
+    artifacts: [],
+    stones: [],
+    chainsPriced: 1661,
+    now: 1_757_100_000_000,
+  };
+  const bandSpace = {
+    mode: 'bands' as const,
+    bands: [
+      [240, 241, 242],
+      [300, 305],
+    ],
+    minGap: 15,
+    minAscensions: 3,
+    maxAscensions: 3,
+    chains: 6,
+    chainsPriced: 6,
+    stoppedEarly: false,
+  };
+
+  it('is absent on a staged run, which proves nothing over a stated space', () => {
+    expect(buildSubmission({ ...base }).space).toBeUndefined();
+  });
+
+  it('carries the bands through, so a reader need not re-parse the typed text', () => {
+    const s = buildSubmission({ ...base, space: bandSpace });
+    expect(s.space?.mode).toBe('bands');
+    expect(s.space?.bands).toEqual([
+      [240, 241, 242],
+      [300, 305],
+    ]);
+    expect(s.space?.minGap).toBe(15);
+  });
+
+  it('distinguishes one pooled range from a range per checkpoint', () => {
+    const s = buildSubmission({
+      ...base,
+      space: {
+        mode: 'range',
+        range: { lo: 185, hi: 390, step: 5 },
+        minGap: 0,
+        minAscensions: 5,
+        maxAscensions: 7,
+        chains: 6006,
+        chainsPriced: 6006,
+        stoppedEarly: false,
+      },
+    });
+    expect(s.space?.mode).toBe('range');
+    expect(s.space?.range).toEqual({ lo: 185, hi: 390, step: 5 });
+    expect(s.space?.bands).toBeUndefined();
+  });
+
+  it('keeps stoppedEarly, which is the difference between a result and a proof', () => {
+    const s = buildSubmission({
+      ...base,
+      space: { ...bandSpace, chainsPriced: 2, stoppedEarly: true },
+    });
+    expect(s.space?.stoppedEarly).toBe(true);
+    expect(s.space?.chainsPriced).toBe(2);
+  });
+});
+
+describe('buildSubmission: run health', () => {
+  const base = {
+    chain: [195, 226, 277, 317, 490],
+    seconds: 758.9 * 86400,
+    legs: [],
+    planStart: 1_757_000_000,
+    timezone: 'UTC',
+    currentTE: 170,
+    finalTE: 490,
+    effort: 'balanced',
+    availability: null,
+    holdShifts: false,
+    artifacts: [],
+    stones: [],
+    chainsPriced: 1661,
+    now: 1_757_100_000_000,
+  };
+  const run = { workers: 19, cores: 20, minutes: 60, secondsPerChain: 0.5 };
+
+  it('reports a freeze rather than letting it pass as a slow machine', () => {
+    const s = buildSubmission({
+      ...base,
+      run: { ...run, suspendedMinutes: 12.34, longestStallMinutes: 9.87 },
+    });
+    expect(s.run?.suspendedMinutes).toBe(12.3);
+    expect(s.run?.longestStallMinutes).toBe(9.9);
+  });
+
+  it('omits both on a build that did not measure them, rather than claiming zero', () => {
+    const s = buildSubmission({ ...base, run });
+    expect(s.run && 'suspendedMinutes' in s.run).toBe(false);
+    expect(s.run && 'longestStallMinutes' in s.run).toBe(false);
   });
 });

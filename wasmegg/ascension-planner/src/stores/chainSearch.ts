@@ -42,7 +42,13 @@ import {
 } from '@/search/csv';
 import { type ShortlistRow } from '@/search/shortlist';
 import { buildView, type ViewId } from '@/search/views';
-import { buildSubmission, scrubIdentifiers, submissionFilename, type Submission } from '@/search/submission';
+import {
+  buildSubmission,
+  scrubIdentifiers,
+  submissionFilename,
+  type SearchSpace,
+  type Submission,
+} from '@/search/submission';
 import { describeAvailability, isConstrained, type Availability } from '@/search/availability';
 import { missedMilestones, usableMilestones, type Milestone } from '@/search/milestones';
 import { defaultSeedChain, seedChainIssue, usableCheckpoints, fitSeedToLimits } from '@/search/seedChain';
@@ -229,6 +235,10 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
    * not running. The panel turns this into the instruction that actually fixes it.
    */
   const suspendedSeconds = ref(0);
+  /** The single worst freeze, kept alongside the total: one long stall reads differently from many short ones. */
+  const longestStallSeconds = ref(0);
+  /** The space an exhaustive run covered, for the submission. Null for every staged run. */
+  const searchSpace = ref<SearchSpace | null>(null);
 
   /**
    * Wall clock around the search, for the submission's run cost.
@@ -260,6 +270,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       workers: workersInPool.value,
       cores: typeof navigator !== 'undefined' && navigator.hardwareConcurrency ? navigator.hardwareConcurrency : null,
       minutes,
+      suspendedMinutes: suspendedSeconds.value / 60,
+      longestStallMinutes: longestStallSeconds.value / 60,
       secondsPerChain: (minutes * 60) / chainsDone.value,
     };
   });
@@ -721,6 +733,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       // Null for a checkpoint replay, and left off entirely in that case, so the board never reads
       // "0 minutes for 400 chains" as a very fast machine.
       ...(runCost.value ? { run: runCost.value } : {}),
+      ...(searchSpace.value ? { space: searchSpace.value } : {}),
       // Read straight off the loaded backup. Null when there is no backup to read, never guessed:
       // "all maxed" asserted for an account nobody looked at would be worse than saying nothing.
       epicResearch: summariseEpicResearch(
@@ -978,6 +991,21 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       }
     }
 
+    // Stated before a single chain is priced, so the submission says what was ASKED for even when
+    // the run is stopped halfway. chainsPriced and stoppedEarly are filled in at the end.
+    searchSpace.value = {
+      mode: spec.bands?.length ? 'bands' : 'range',
+      ...(spec.bands?.length
+        ? { bands: spec.bands.map(b => [...b]) }
+        : { range: { lo: spec.lo, hi: spec.hi, step: spec.step } }),
+      minGap,
+      minAscensions: spec.bands?.length ? spec.bands.length + 1 : spec.minAsc,
+      maxAscensions: spec.bands?.length ? spec.bands.length + 1 : spec.maxAsc,
+      chains: chains.length,
+      chainsPriced: 0,
+      stoppedEarly: false,
+    };
+
     error.value = null;
     stopRequested.value = false;
     stoppedEarly.value = false;
@@ -999,6 +1027,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     batchDone.value = 0;
     batchTotal.value = 0;
     suspendedSeconds.value = 0;
+    longestStallSeconds.value = 0;
     runStartedAt.value = Date.now();
     runEndedAt.value = 0;
     lastRateAt = Date.now();
@@ -1050,6 +1079,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       pool = await createChainSearchPool(collectInputs(), {
         onSuspend: gap => {
           suspendedSeconds.value += gap;
+          longestStallSeconds.value = Math.max(longestStallSeconds.value, gap);
           runLog.value.push(`--- the browser suspended this tab for ${Math.round(gap / 60)} minutes`);
         },
       });
@@ -1083,6 +1113,10 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       }
 
       stoppedEarly.value = stopRequested.value;
+      if (searchSpace.value) {
+        searchSpace.value.chainsPriced = liveCache.length;
+        searchSpace.value.stoppedEarly = stopRequested.value;
+      }
       stage.value = stopRequested.value ? 'stopped' : 'done';
       refreshShortlist(true);
       await persist(liveCache, true, !stopRequested.value);
@@ -1108,6 +1142,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     chainsDone.value = 0;
     chainsReplayed.value = 0;
     runLog.value = [];
+    // A staged run proves nothing over a stated space, and must not inherit the last one's.
+    searchSpace.value = null;
     secondsPerChain.value = 0;
     // A fresh run's export must not carry the previous run's rows: the settings that give every
     // duration its meaning (plan start, excluded hours, final target) may all have changed.
@@ -1119,6 +1155,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     batchDone.value = 0;
     batchTotal.value = 0;
     suspendedSeconds.value = 0;
+    longestStallSeconds.value = 0;
     runStartedAt.value = Date.now();
     runEndedAt.value = 0;
     lastCheckpointAt = 0;
@@ -1163,6 +1200,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       pool = await createChainSearchPool(collectInputs(), {
         onSuspend: gap => {
           suspendedSeconds.value += gap;
+          longestStallSeconds.value = Math.max(longestStallSeconds.value, gap);
           runLog.value.push(
             `--- the browser suspended this tab for ${Math.round(gap / 60)} minutes; nothing ran in that time`
           );
@@ -1435,6 +1473,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     checkResumable,
     discardCheckpoint,
     runStartedAt,
+    searchSpace,
     exportCsv,
     buildRunSubmission,
     sendSubmission,
