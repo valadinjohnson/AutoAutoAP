@@ -345,11 +345,13 @@
             <div class="flex items-center justify-center gap-1.5">
               <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Assumed cost</span>
               <HelpTip
-                >The 15 s per chain the estimate assumes. Your real figure appears under the progress bar once the first
-                chunk lands, measured on this machine.</HelpTip
+                >What the estimate charges per chain. It starts at the 15 s assumption and switches to this machine's
+                own measured rate once the first chunk lands, so the estimate beside it stops being a guess.</HelpTip
               >
             </div>
-            <div class="text-lg font-black text-slate-900 tabular-nums">15 s</div>
+            <div class="text-lg font-black tabular-nums" :class="measuredCost ? 'text-emerald-700' : 'text-slate-900'">
+              {{ measuredCost ? measuredCost.toFixed(2) + ' s' : '15 s' }}
+            </div>
           </div>
         </div>
         <p class="text-[11px] leading-relaxed" :class="tooBig ? 'text-red-800' : 'text-slate-500'">
@@ -455,7 +457,13 @@
           Best chain<template v-if="!store.isRunning && !store.stoppedEarly"> — proven optimum of this space</template>
         </div>
         <div class="font-mono-premium text-lg font-black text-slate-900">{{ store.bestChain.join(' ') }}</div>
-        <div class="text-xs text-emerald-800">{{ store.bestDays.toFixed(3) }} days</div>
+        <div class="text-xs text-emerald-800">
+          {{ store.bestDays.toFixed(3) }} days &middot; <span class="font-semibold">ends {{ endDate }}</span>
+        </div>
+        <p class="text-[10px] text-emerald-900/60">
+          Compare runs on the finish date. Two runs started hours apart have different plan starts, so their day counts
+          are not measuring the same thing; the date they land on is.
+        </p>
         <p v-if="store.stoppedEarly" class="text-[11px] text-emerald-900/70 pt-1">
           You stopped it early, so this is the best of what was priced, not the optimum of the space.
         </p>
@@ -576,6 +584,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useChainSearchStore } from '@/stores/chainSearch';
+import { useAutoPlannerStore } from '@/stores/autoPlanner';
 import {
   buildPool,
   countChains,
@@ -602,6 +611,7 @@ function downloadCsv(): void {
 
 const props = defineProps<{ playerId: string }>();
 const store = useChainSearchStore();
+const autoPlannerStore = useAutoPlannerStore();
 
 /** Past this the estimate is longer than anyone will wait, and the form says so rather than
  *  refusing: the point of this page is that the decision is the operator's. */
@@ -679,12 +689,53 @@ const chainCountLabel = computed(() =>
  * the first.
  */
 const pricedSoFar = computed(() => store.chainsDone + (store.isRunning ? store.batchDone : 0));
+
+/**
+ * The finish INSTANT, not the duration. Durations from different plan starts are not comparable --
+ * two runs started an hour apart produce day counts that cannot be ranked against each other -- and
+ * the date is what a player actually plans around. The main panel has shown this all along; the
+ * exhaustive panel printed days only, which is exactly the comparison people were getting wrong.
+ */
+const endDate = computed(() => {
+  if (!(store.bestDays > 0)) return '—';
+  const tz = autoPlannerStore.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: tz,
+    weekday: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date((store.planStart + store.bestDays * 86400) * 1000));
+});
 const livePercent = computed(() =>
   store.chainsEstimated > 0 ? Math.min(100, (pricedSoFar.value / store.chainsEstimated) * 100) : 0
 );
 
-const hours = computed(() => estimateHours(chainCount.value, store.workersInPool));
-const estimateLabel = computed(() => (chainCount.value ? formatHours(hours.value) : '—'));
+/**
+ * The rate this machine is actually managing, once it has managed anything. The 15 s assumption is
+ * a floor for a cold leg, and prefix sharing means most chains cost a fraction of that -- on these
+ * runs the real figure has landed anywhere from 0.66 to 3.2 s, which is the difference between an
+ * estimate that means something and one that is off by a factor of twenty.
+ */
+const measuredCost = computed(() => (store.secondsPerChain > 0 ? store.secondsPerChain : 0));
+
+const hours = computed(() =>
+  estimateHours(chainCount.value, store.workersInPool, measuredCost.value || undefined)
+);
+
+/**
+ * While a run is going, the number people want is how much is LEFT, not what the whole thing was
+ * once predicted to cost. Both are computed at the measured rate.
+ */
+const remainingHours = computed(() =>
+  estimateHours(Math.max(0, store.chainsEstimated - pricedSoFar.value), store.workersInPool, measuredCost.value || undefined)
+);
+const estimateLabel = computed(() => {
+  if (store.isRunning && measuredCost.value) return formatHours(remainingHours.value) + ' left';
+  return chainCount.value ? formatHours(hours.value) : '—';
+});
 const tooBig = computed(() => chainCount.value > 0 && hours.value > TOO_BIG_HOURS);
 
 // The pool's lower bound is only meaningful above current TE, and current TE arrives with the
