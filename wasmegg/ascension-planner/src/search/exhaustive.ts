@@ -343,6 +343,31 @@ interface BandTable {
 }
 
 const MEASURED_BANDS: Record<number, BandTable> = {
+  // 2-4 come from one exhaustive sweep each (180 -> 490, one account, 2026-09-16), so they are
+  // proven optima of their own space rather than the found-here sample the 5-7 tables are built
+  // from. Narrower for that reason, and on a single account they should be read as such.
+  2: {
+    bands: [[0.255, 0.374]],
+    runs: 1,
+    accounts: 1,
+  },
+  3: {
+    bands: [
+      [0.068, 0.165],
+      [0.323, 0.435],
+    ],
+    runs: 1,
+    accounts: 1,
+  },
+  4: {
+    bands: [
+      [0.035, 0.1],
+      [0.129, 0.29],
+      [0.323, 0.452],
+    ],
+    runs: 1,
+    accounts: 1,
+  },
   5: {
     bands: [
       [0.024, 0.169],

@@ -15,6 +15,7 @@ import {
   SMALLEST_MEASURED_GAP,
   suggestBands,
   SUGGESTION_TARGET_RANGE,
+  SUGGESTABLE_ASCENSIONS,
 } from './exhaustive';
 
 describe('buildPool', () => {
@@ -330,8 +331,22 @@ describe('suggestBands', () => {
   });
 
   it('declines on an ascension count the corpus cannot support', () => {
-    expect(suggestBands(179, 490, 4)).toBeNull();
+    expect(suggestBands(179, 490, 1)).toBeNull();
     expect(suggestBands(179, 490, 9)).toBeNull();
+  });
+
+  it('covers the short chains too, and keeps every table ordered and inside the journey', () => {
+    // 2-4 came from single-account exhaustive sweeps; the shape rules are the same either way.
+    for (const n of SUGGESTABLE_ASCENSIONS) {
+      const s = suggestBands(180, 490, n);
+      expect(s, `${n} ascensions`).not.toBeNull();
+      expect(s!.bands).toHaveLength(n - 1);
+      for (const values of s!.bands) {
+        expect(values.length).toBeGreaterThan(0);
+        expect(Math.min(...values)).toBeGreaterThan(180);
+        expect(Math.max(...values)).toBeLessThan(490);
+      }
+    }
   });
 
   it('declines rather than inverting when the account has already passed the target', () => {

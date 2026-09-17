@@ -1091,6 +1091,7 @@ async function runExhaustive(
   }
   if (!chains.length) throw new Error('no chains: check --range against --prestiges');
 
+  const csvPath = resolveCsvPath();
   const workers = jobs > 1 ? await makeWorkerPool(jobs) : null;
   const inline = workers ? null : createChainEvaluator(inputs);
   let inlineLegSims = 0;
@@ -1123,6 +1124,14 @@ async function runExhaustive(
       for (const r of results) cache.push({ key: r.chain.join(','), seconds: r.seconds, legs: r.legs });
       const done = Math.min(i + CHUNK, chains.length);
       const best = cache.reduce((m, e) => (e.seconds > 0 && e.seconds < m ? e.seconds : m), Infinity);
+      // Flush what is priced so far. Rewriting the file each chunk is wasteful in principle, but a
+      // chunk is minutes of pricing and the write is milliseconds, so the waste is not measurable.
+      if (csvPath) {
+        const sofar = cache.filter(e => e.seconds > 0).sort((a, b) => a.seconds - b.seconds);
+        if (sofar.length) {
+          writeCsv(csvPath, sofar, sofar[0].key.split(',').map(Number), { ...o, effort: 'exhaustive' });
+        }
+      }
       console.log('  ' + done + '/' + chains.length +
         (Number.isFinite(best) ? '   best ' + (best / 86400).toFixed(3) + ' d' : ''));
     }
@@ -1289,6 +1298,43 @@ function resolveCsvPath(): string | null {
   return `fastsearch-${stamp}.csv`;
 }
 
+/**
+ * Write the panel's CSV. Separate from report() so the exhaustive loop can flush a partial file as
+ * it goes: report() only ran on success, so a run still in progress -- or one that died, or whose
+ * machine restarted -- left nothing on disk at all. A two-day exhaustive is unattended by
+ * definition, which is exactly when that matters.
+ */
+function writeCsv(
+  path: string,
+  ranked: CacheEntry[],
+  chain: number[],
+  o: {
+    tz: string;
+    planStart: number;
+    currentTE: number;
+    final: number;
+    availability: Availability | null;
+    effort: string;
+  }
+): void {
+  const raw = (simContext() as any).rawBackup ?? null;
+  writeFileSync(
+    path,
+    buildChainsCsv(ranked, {
+      planStart: o.planStart,
+      timezone: o.tz,
+      currentTE: o.currentTE,
+      final: o.final,
+      effort: o.effort,
+      forceContinue: has('force-continue'),
+      availability: o.availability,
+      seedChain: chain,
+      inventory: raw ? describeVirtueInventory(raw) : undefined,
+      loadouts: [],
+    })
+  );
+}
+
 /** Print the answer, and write the panel's own CSV. Shared by both new modes. */
 function report(
   chain: number[],
@@ -1326,22 +1372,7 @@ function report(
 
   const csv = resolveCsvPath();
   if (csv) {
-    const raw = (simContext() as any).rawBackup ?? null;
-    writeFileSync(
-      csv,
-      buildChainsCsv(ranked, {
-        planStart: o.planStart,
-        timezone: o.tz,
-        currentTE: o.currentTE,
-        final: o.final,
-        effort: o.effort,
-        forceContinue: has('force-continue'),
-        availability: o.availability,
-        seedChain: chain,
-        inventory: raw ? describeVirtueInventory(raw) : undefined,
-        loadouts: [],
-      })
-    );
+    writeCsv(csv, ranked, chain, o);
     console.log('\n  ' + ranked.length + ' chains -> ' + csv);
   }
 }
