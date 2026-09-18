@@ -21,7 +21,7 @@ import { hashID } from '@/lib/storage/db';
 import { runChainSearch, type CacheEntry } from '@/search/driver';
 import { findStartingChain, planCoarseGrid } from '@/search/coarse';
 import { createChainSearchPool, type ChainSearchPool } from '@/search/pool';
-import { maxPoolSize } from '@/search/batch';
+import { hardwareThreads, maxPoolSize } from '@/search/batch';
 import { EFFORT, estimateChains } from '@/search/effort';
 import {
   buildCheckpoint,
@@ -221,6 +221,16 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
   const finishedCleanly = computed(
     () => !isRunning.value && !error.value && !stoppedEarly.value && stage.value.startsWith('done')
   );
+  /**
+   * Workers this run may use. The knob, as opposed to `workersInPool`, which is the readback.
+   *
+   * Separate because the two answer different questions and a run can make them disagree: the pool
+   * spawns lazily and a small batch is not worth every worker, so "how many did you end up with" is
+   * not "how many may you have". Held to the machine's core count when a pool is built.
+   */
+  const workerBudget = ref(maxPoolSize());
+  /** Logical cores, for the panel to show alongside the knob. */
+  const machineThreads = hardwareThreads();
   const workersInPool = ref(maxPoolSize());
   /** Measured on THIS machine, from this run's own batches. Not an assumption carried over from the
    *  CLI's 20-core box. */
@@ -1192,9 +1202,11 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     }
 
     holdRunLock();
+    void holdScreenLock();
     document.addEventListener('visibilitychange', onVisibilityChange);
     try {
       pool = await createChainSearchPool(collectInputs(), {
+        size: workerBudget.value,
         onSuspend: gap => {
           suspendedSeconds.value += gap;
           longestStallSeconds.value = Math.max(longestStallSeconds.value, gap);
@@ -1248,6 +1260,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       isRunning.value = false;
       document.removeEventListener('visibilitychange', onVisibilityChange);
       dropRunLock();
+      dropScreenLock();
     }
   }
 
@@ -1295,6 +1308,47 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
   }
 
   /**
+   * Keep the SCREEN awake while a run is visible.
+   *
+   * A different problem from the Web Lock above, with a different owner. The lock argues with the
+   * browser about freezing a backgrounded tab; this argues with the operating system about dimming
+   * and locking the display, which on a desktop is usually the step before the machine suspends --
+   * and a suspended machine stops everything, workers included. It is the difference between a run
+   * that is slower in the morning and a run that did nothing for six hours.
+   *
+   * ONLY WORKS WHILE THE TAB IS VISIBLE, by design of the API: the lock is released automatically
+   * when the tab is hidden or the window minimised, and cannot be taken again until it is back. So
+   * it is re-requested on `visibilitychange` rather than taken once, and a run left with the tab in
+   * the background genuinely has no screen lock -- there is no API that does.
+   *
+   * IT DOES NOT STOP THE MACHINE SLEEPING ON ITS OWN TERMS. A sleep timer that fires regardless of
+   * display state, a lid close, or a manual sleep will still suspend everything; the run resumes
+   * where it left off from the checkpoint, and `onSuspend` reports the gap rather than pretending it
+   * did not happen. The README says which OS setting actually covers that.
+   */
+  let screenLock: WakeLockSentinel | null = null;
+
+  async function holdScreenLock(): Promise<void> {
+    const wakeLock = (navigator as Navigator & { wakeLock?: WakeLock }).wakeLock;
+    if (!wakeLock || screenLock || document.visibilityState !== 'visible') return;
+    try {
+      screenLock = await wakeLock.request('screen');
+      // The browser releases it on its own when the tab hides; drop our handle so the
+      // visibilitychange path knows to ask again rather than believing it still holds one.
+      screenLock.addEventListener('release', () => {
+        screenLock = null;
+      });
+    } catch {
+      /* Refused, unsupported, or the tab lost visibility mid-request. Not worth failing a run for. */
+    }
+  }
+
+  function dropScreenLock(): void {
+    void screenLock?.release().catch(() => {});
+    screenLock = null;
+  }
+
+  /**
    * Checkpoint when the tab is hidden, not only on the timer.
    *
    * `visibilitychange` is the last event a page is guaranteed to get: `beforeunload` and `unload`
@@ -1303,7 +1357,10 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
    * it the one point where a save is worth paying for off-schedule.
    */
   function onVisibilityChange(): void {
-    if (document.visibilityState === 'hidden' && isRunning.value) void persist(liveCache, true);
+    if (!isRunning.value) return;
+    if (document.visibilityState === 'hidden') void persist(liveCache, true);
+    // Coming back into view is the only moment a screen lock can be taken again.
+    else void holdScreenLock();
   }
 
   async function start(playerId: string, options: { resume?: boolean } = {}): Promise<void> {
@@ -1372,9 +1429,11 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     }
 
     holdRunLock();
+    void holdScreenLock();
     document.addEventListener('visibilitychange', onVisibilityChange);
     try {
       pool = await createChainSearchPool(collectInputs(), {
+        size: workerBudget.value,
         onSuspend: gap => {
           suspendedSeconds.value += gap;
           longestStallSeconds.value = Math.max(longestStallSeconds.value, gap);
@@ -1501,6 +1560,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       batchTotal.value = 0;
       document.removeEventListener('visibilitychange', onVisibilityChange);
       dropRunLock();
+      dropScreenLock();
       await checkResumable(playerId);
     }
   }
@@ -1653,6 +1713,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     discardCheckpoint,
     runStartedAt,
     searchSpace,
+    workerBudget,
+    machineThreads,
     legDetailBudget,
     legsHeld,
     legDetailBytes,

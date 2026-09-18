@@ -204,6 +204,33 @@ There is no way for a page to request or cap memory, so "how much should this us
 answered as "how much should it choose to hold". Setting the budget to `0` keeps everything,
 which is a real choice for a short run on a machine with room.
 
+**Workers, and what the page can see of your machine.** The panel's **This machine** card shows
+everything a web page is actually told: logical cores, the tab's heap limit and current usage,
+and `navigator.deviceMemory`. Only the first is accurate. Reported RAM is rounded to a power of
+two and clamped to a ceiling the browser picks — anti-fingerprinting, not a bug — so a 64 GB
+workstation does not read as 64 GB, and there is no GPU figure at all. That is why the budgets
+are knobs rather than something detected: no amount of probing distinguishes "background job
+while I work" from "the machine is yours until morning", which is the only input that matters.
+
+Three presets set both knobs together — **Background** (a quarter of your cores, small cache),
+**Balanced** (every core but one, the default), **Overnight** (every core, detail for far more
+chains) — and both numbers stay visible and editable underneath. Workers default to cores minus
+one so the main thread keeps the progress bar painting and Stop responsive; you can spend that
+last core, and asking for more than your core count buys nothing, since the workers are CPU-bound
+and would only take turns. Each worker also gets its own heap on top of the tab's, which is part
+of why the worker count is a memory decision as well as a speed one.
+
+**The machine sleeping.** A suspended machine stops everything, workers included — the run
+resumes from its checkpoint when you come back, and `onSuspend` reports the gap in the run log
+rather than pretending the hours happened. While the tab is visible the run takes a **Screen Wake
+Lock**, which keeps the display from dimming or locking and on most desktops is what was leading
+to the suspend. Two limits worth knowing: the API releases the lock automatically whenever the
+tab is hidden or the window minimised and it cannot be re-taken until the tab is visible again
+(the run re-requests it on `visibilitychange`), and it argues only with the *display* timeout. A
+system sleep timer, a lid close, or a manual sleep still suspends the machine. If you leave runs
+overnight, set the OS to never sleep while plugged in — that is the setting that covers it, and
+nothing in the page can substitute for it.
+
 **Freezing and discarding.** These are two different mechanisms and only one of them can be
 argued with from code.
 

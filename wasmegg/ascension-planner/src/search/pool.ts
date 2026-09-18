@@ -25,7 +25,7 @@
  */
 import { sanitizeLongs } from '@/lib/artifacts/utils';
 import { sortChainsDepthFirst } from './chain';
-import { maxPoolSize, splitByPrefix, workersForBatch } from './batch';
+import { clampPoolSize, maxPoolSize, splitByPrefix, workersForBatch } from './batch';
 import type { ChainResult, SearchInputs } from './types';
 import type { EvaluateResultMessage, WorkerRequest, WorkerResponse } from '@/workers/chainSearch.protocol';
 
@@ -97,6 +97,9 @@ export interface PoolOptions {
   stallMs?: number;
   /** Injectable clock, so the tests do not have to wait ten minutes. */
   now?: () => number;
+  /** How many workers to allow. Held to [1, logical cores] by `clampPoolSize`. Unset keeps the
+   *  historical default of one per core less one for the main thread. */
+  size?: number;
 }
 
 export interface ChainSearchPool {
@@ -114,7 +117,9 @@ export interface ChainSearchPool {
 }
 
 export async function createChainSearchPool(inputs: SearchInputs, opts: PoolOptions = {}): Promise<ChainSearchPool> {
-  const size = maxPoolSize();
+  // Caller's choice, held to what the machine has. Unset means the default -- one per core less one
+  // for the main thread -- which is what this always did.
+  const size = opts.size === undefined ? maxPoolSize() : clampPoolSize(opts.size);
   const stallMs = opts.stallMs ?? STALL_MS;
   const now = opts.now ?? (() => Date.now());
   let nextRequestId = 0;

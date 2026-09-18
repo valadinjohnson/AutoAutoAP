@@ -35,11 +35,30 @@ const MIN_CHAINS_PER_WORKER = 2;
  *  browsers clamp or omit it). Four is a safe floor on anything that can run this app at all. */
 const DEFAULT_CONCURRENCY = 4;
 
-/** The pool's hard ceiling: one worker per logical core, minus one left for the main thread so the
- *  progress bar keeps painting. */
+/** Logical cores, as the browser reports them. The one hardware fact a page is reliably told. */
+export function hardwareThreads(): number {
+  return (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || DEFAULT_CONCURRENCY;
+}
+
+/** The pool's DEFAULT: one worker per logical core, minus one left for the main thread so the
+ *  progress bar keeps painting. Not a ceiling -- see `clampPoolSize`, which lets someone who is
+ *  leaving a machine to run overnight spend the last core too. */
 export function maxPoolSize(): number {
-  const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || DEFAULT_CONCURRENCY;
-  return Math.max(1, cores - 1);
+  return Math.max(1, hardwareThreads() - 1);
+}
+
+/**
+ * Hold a requested worker count to something this machine can actually run.
+ *
+ * The ceiling is every logical core, not cores minus one. Leaving one for the main thread is the
+ * right DEFAULT -- it is what keeps the progress bar painting and the Stop button responsive -- but
+ * it is a comfort setting, and someone who has decided to give a machine over to a run overnight
+ * should be able to spend it. Past the core count there is nothing to buy: the workers are CPU-bound
+ * and would only take turns.
+ */
+export function clampPoolSize(requested: number): number {
+  if (!Number.isFinite(requested)) return maxPoolSize();
+  return Math.max(1, Math.min(hardwareThreads(), Math.floor(requested)));
 }
 
 /** How many of the pool's workers this particular batch is worth using. */

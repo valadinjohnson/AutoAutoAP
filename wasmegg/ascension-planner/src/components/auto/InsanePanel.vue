@@ -164,12 +164,66 @@
       </div>
 
       <!--
-        The memory budget. A browser gives a page no way to ASK for memory, so the only honest knob
-        is how much this run chooses to keep: a priced chain's answer is tens of bytes and its
-        per-leg detail is kilobytes, so the detail is the entire question.
+        What this run is allowed to spend, and what the browser will admit about the machine.
+
+        A page is told very little about its hardware, on purpose: core count is the one solid
+        number, memory is coarse and capped, and there is no GPU or total-RAM figure at all. So the
+        panel shows exactly what it is given, says where each number stops being trustworthy, and
+        leaves the rest as knobs -- which is the honest arrangement anyway, because "background job
+        while I work" and "the machine is yours until morning" are different answers that no
+        amount of detection would choose between.
       -->
       <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
-        <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Memory</h3>
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">This machine</h3>
+          <div class="flex flex-wrap gap-1">
+            <button
+              v-for="p in PROFILES"
+              :key="p.id"
+              type="button"
+              :disabled="store.isRunning"
+              class="px-2.5 py-1 rounded-md border text-[10px] font-black uppercase tracking-widest disabled:opacity-40"
+              :class="
+                activeProfile === p.id
+                  ? 'border-slate-800 bg-slate-800 text-white'
+                  : 'border-slate-200 text-slate-500 hover:text-slate-700'
+              "
+              :title="p.blurb"
+              @click="applyProfile(p.id)"
+            >
+              {{ p.label }}
+            </button>
+          </div>
+        </div>
+        <dl class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">
+          <div>
+            <dt class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Logical cores</dt>
+            <dd class="font-bold text-slate-700">{{ store.machineThreads }}</dd>
+          </div>
+          <div>
+            <dt class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Tab heap limit</dt>
+            <dd class="font-bold text-slate-700">{{ heapLimitMb || 'not reported' }}</dd>
+          </div>
+          <div>
+            <dt class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Heap in use</dt>
+            <dd class="font-bold text-slate-700">{{ heapUsedMb || 'not reported' }}</dd>
+          </div>
+          <div>
+            <dt class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Reported RAM</dt>
+            <dd class="font-bold text-slate-700">{{ deviceMemoryLabel }}</dd>
+          </div>
+        </dl>
+        <p class="text-[11px] text-slate-500 leading-relaxed">
+          Cores is the one hardware figure a web page is told accurately.
+          <span class="font-bold text-slate-700">Reported RAM is deliberately coarse</span> — rounded to a power of two
+          and clamped to a ceiling the browser picks, so a 64 GB machine reads as whatever that ceiling is. It is an
+          anti-fingerprinting measure rather than a bug, and it is why the budget below is a knob instead of something
+          detected. There is no way for a page to see your GPU, and no way to see your real memory. The tab's heap limit
+          is separate from your RAM and much smaller; each worker gets its own heap on top of it, which is part of why
+          more workers buys more than just speed.
+        </p>
+
+        <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest pt-1">Memory</h3>
         <div class="flex flex-wrap items-end gap-4">
           <label class="space-y-1">
             <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">
@@ -242,15 +296,19 @@
             <span class="flex items-center gap-1.5">
               <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Workers</span>
               <HelpTip
-                >Background threads this browser will use, one less than your logical core count so the tab stays
-                responsive. Chains are dealt out across them; see "How the work is split" below.</HelpTip
+                >Background threads this run may use. The default is one less than your logical core count, which leaves
+                the main thread free so the progress bar keeps painting and Stop stays responsive. You can spend that
+                last core too; past your core count there is nothing to buy, because the workers are CPU-bound and would
+                only take turns. Chains are dealt out across them; see "How the work is split" below.</HelpTip
               >
             </span>
             <input
-              :value="store.workersInPool"
+              v-model.number="store.workerBudget"
               type="number"
-              disabled
-              class="w-full rounded-lg border-slate-200 bg-slate-50 text-sm font-bold text-slate-500"
+              min="1"
+              :max="store.machineThreads"
+              :disabled="store.isRunning"
+              class="w-full rounded-lg border-slate-200 text-sm font-bold text-slate-800 disabled:bg-slate-50 disabled:text-slate-500"
             />
           </label>
         </div>
@@ -878,6 +936,65 @@ const mb = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(0)} MB`;
 const heldMb = computed(() => mb(store.legDetailBytes));
 const heapUsedMb = computed(() => (heap.value ? mb(heap.value.used) : ''));
 const heapLimitMb = computed(() => (heap.value ? mb(heap.value.limit) : ''));
+
+/**
+ * `navigator.deviceMemory`: coarse by design and absent outside Chromium.
+ *
+ * Rounded to a power of two and clamped, but NOT to a fixed 8 -- the spec describes an upper bound
+ * the implementation chooses, and browsers differ. Measured while building this panel: a machine
+ * reported 16 here while the surrounding copy claimed a hard 8 GB cap, which is why that copy now
+ * says "a ceiling the browser picks" instead of naming a number the page might contradict on screen.
+ */
+const deviceMemoryLabel = computed(() => {
+  const gb = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  return gb ? `${gb} GB or more` : 'not reported';
+});
+
+/**
+ * Presets, because the real question is what the machine is FOR right now.
+ *
+ * No amount of hardware detection answers "am I working on this machine or have I gone to bed",
+ * and that is the only input that matters here: the same 20-core box wants a quarter of itself
+ * while someone is using it and all of itself overnight. Three named answers beat two numbers
+ * nobody knows how to set, and the numbers stay visible and editable underneath.
+ */
+const PROFILES = [
+  {
+    id: 'background',
+    label: 'Background',
+    blurb: 'A quarter of your cores and a small cache. For running while you use the machine.',
+    workers: () => Math.max(1, Math.floor(store.machineThreads / 4)),
+    legDetail: 1000,
+  },
+  {
+    id: 'balanced',
+    label: 'Balanced',
+    blurb: 'Every core but one, so the tab stays responsive. The default.',
+    workers: () => Math.max(1, store.machineThreads - 1),
+    legDetail: 2000,
+  },
+  {
+    id: 'overnight',
+    label: 'Overnight',
+    blurb: 'Every core, and detail kept for far more chains. For a machine you have finished with.',
+    workers: () => store.machineThreads,
+    legDetail: 20000,
+  },
+] as const;
+
+type ProfileId = (typeof PROFILES)[number]['id'];
+
+const activeProfile = computed<ProfileId | ''>(() => {
+  const hit = PROFILES.find(p => p.workers() === store.workerBudget && p.legDetail === store.legDetailBudget);
+  return hit ? hit.id : '';
+});
+
+function applyProfile(id: ProfileId): void {
+  const p = PROFILES.find(x => x.id === id);
+  if (!p) return;
+  store.workerBudget = p.workers();
+  store.legDetailBudget = p.legDetail;
+}
 
 const rangeLo = ref(185);
 const rangeHi = ref(390);
