@@ -1,0 +1,65 @@
+# Netlify build for this workspace alone.
+#
+# SET "BASE DIRECTORY" TO `wasmegg/ascension-planner` IN THE NETLIFY UI. That is what makes this
+# file the config, and it is the one setting that cannot live in this file -- Netlify has to know
+# where to look before it can read anything. Without it, detection walks the monorepo, finds
+# something Remix-shaped in `ui/`, and builds that instead: "remix: command not found", exit 127,
+# with a resolved config pointing at ui/dist/client. Every value below exists to make sure nothing
+# is guessed twice.
+#
+# `wasmegg/netlify.toml` is upstream's and builds the whole tool collection into one site. This one
+# builds this workspace only. They do not conflict; the base directory decides which is read.
+
+[build]
+  # Relative to the base directory. `pnpm install` has already run at the repo root by this point
+  # -- Netlify sees the pnpm workspace and installs all 23 projects -- so this only has to build.
+  command = "pnpm build"
+  publish = "dist"
+
+[build.environment]
+  # Pinned rather than left to drift. Netlify's default happened to be 24 when this was written;
+  # a future bump is not something a deploy should discover on its own. pnpm needs no pin here:
+  # corepack reads `packageManager` from the root package.json (pnpm@11.11.0), which is load-bearing
+  # -- pnpm 8 resolves two copies of vue and the built app silently drops the ui/ components.
+  NODE_VERSION = "24"
+
+# THE APP IS BUILT UNDER /ascension-planner/, AND THIS IS WHY IT STILL WORKS AT THE ROOT.
+#
+# `base` in vite.config.ts is `/ascension-planner/`, so index.html asks for its assets at
+# /ascension-planner/assets/*. Publishing dist/ as the site root would put those files at /assets/*
+# and every one of them would 404 -- a blank page with a console full of module load failures.
+#
+# Rather than change the base and break every link already shared, this rewrites the prefix away:
+# /ascension-planner/assets/index-abc.js is served from /assets/index-abc.js. Both spellings of
+# every URL work, so an existing bookmark to egg.williamstest.fyi/ascension-planner/?insane=1 keeps
+# working after the move, and so does the bare domain.
+#
+# A rewrite (200), not a redirect: a redirect would send the browser round again for every asset.
+[[redirects]]
+  from = "/ascension-planner/*"
+  to = "/:splat"
+  status = 200
+
+# NO CATCH-ALL SPA FALLBACK, deliberately. This app has no client-side router -- it varies on query
+# strings (`?insane=1`, `?playerId=`), which a static host already serves from one index.html. A
+# `/* -> /index.html 200` rule would turn every genuine 404, including a typo'd asset path, into a
+# page that loads and then does nothing, which is the hardest kind of broken to diagnose.
+
+# Content-hashed filenames, so they can be cached forever. Vite puts the hash in the name, which
+# means a new build is a new URL and a stale cache is impossible by construction. Without this the
+# default is a short TTL and every repeat visitor re-downloads ~1 MB of unchanged JavaScript.
+#
+# BOTH SPELLINGS, because header rules match the path the BROWSER asked for, not the path the
+# rewrite above resolved it to. Real requests arrive prefixed -- that is what the built index.html
+# and the `new Worker(new URL('/ascension-planner/assets/...'))` calls ask for -- so a rule written
+# only for /assets/* would match nothing that any visitor actually requests, and would look correct
+# in the file while doing nothing at all.
+[[headers]]
+  for = "/ascension-planner/assets/*"
+  [headers.values]
+    cache-control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    cache-control = "public, max-age=31536000, immutable"
