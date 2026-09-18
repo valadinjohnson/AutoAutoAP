@@ -64,15 +64,24 @@
         that decide dates cannot live on a tab you have to leave the mode to reach.
       -->
       <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
-        <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">When the plan runs</h3>
+        <button
+          type="button"
+          class="w-full flex items-center justify-between gap-3 text-left"
+          :aria-expanded="showSchedule"
+          @click="showSchedule = !showSchedule"
+        >
+          <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">When the plan runs</h3>
+          <span class="text-[10px] font-bold text-slate-400">{{ scheduleSummary }} {{ showSchedule ? '⌄' : '›' }}</span>
+        </button>
 
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div v-if="showSchedule" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <label class="space-y-1">
             <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Plan starts</span>
             <input
               v-model="autoPlannerStore.startDate"
               type="date"
-              class="w-full rounded-lg border-slate-200 text-sm font-bold text-slate-800"
+              :disabled="store.isRunning"
+              class="w-full rounded-lg border-slate-200 text-sm font-bold text-slate-800 disabled:bg-slate-50 disabled:text-slate-500"
             />
           </label>
           <label class="space-y-1">
@@ -80,7 +89,8 @@
             <input
               v-model="autoPlannerStore.startTime"
               type="time"
-              class="w-full rounded-lg border-slate-200 text-sm font-bold text-slate-800"
+              :disabled="store.isRunning"
+              class="w-full rounded-lg border-slate-200 text-sm font-bold text-slate-800 disabled:bg-slate-50 disabled:text-slate-500"
             />
           </label>
           <div class="space-y-1">
@@ -91,23 +101,24 @@
         <!-- An unset start is not harmless: it means "now", which moves on every reload, and plan
              start is part of the run fingerprint -- so a checkpoint saved before a refresh stops
              matching and a long run restarts from nothing. -->
-        <p v-if="store.planStartIsNow" class="text-[11px] font-semibold text-amber-700 leading-relaxed">
+        <p v-if="showSchedule && store.planStartIsNow" class="text-[11px] font-semibold text-amber-700 leading-relaxed">
           No start set, so the plan is timed from right now — which moves every time you reload, and takes your saved
           checkpoint with it. Set a date and time before starting a long run.
         </p>
 
-        <label class="flex items-start gap-3 cursor-pointer">
+        <label v-if="showSchedule" class="flex items-start gap-3 cursor-pointer">
           <input
             v-model="store.scheduleEnabled"
             type="checkbox"
-            class="mt-0.5 rounded border-slate-300 text-indigo-600"
+            :disabled="store.isRunning"
+            class="mt-0.5 rounded border-slate-300 text-indigo-600 disabled:opacity-40"
           />
           <span class="text-[11px] text-slate-600 leading-relaxed">
             <span class="font-bold text-slate-800">Only count on me during these hours.</span> Off means the plan
             assumes you are available at any hour, which is the faster answer and not usually the real one.
           </span>
         </label>
-        <div v-if="store.scheduleEnabled" class="pl-8 space-y-3">
+        <div v-if="showSchedule && store.scheduleEnabled" class="pl-8 space-y-3">
           <div class="flex flex-wrap items-center gap-3">
             <label class="flex items-center gap-2 text-[11px] font-bold text-slate-600">
               From
@@ -116,7 +127,8 @@
                 type="number"
                 min="0"
                 max="23"
-                class="w-20 rounded-lg border-slate-200 text-sm font-bold text-slate-800"
+                :disabled="store.isRunning"
+                class="w-20 rounded-lg border-slate-200 text-sm font-bold text-slate-800 disabled:bg-slate-50 disabled:text-slate-500"
               />
             </label>
             <label class="flex items-center gap-2 text-[11px] font-bold text-slate-600">
@@ -126,7 +138,8 @@
                 type="number"
                 min="0"
                 max="23"
-                class="w-20 rounded-lg border-slate-200 text-sm font-bold text-slate-800"
+                :disabled="store.isRunning"
+                class="w-20 rounded-lg border-slate-200 text-sm font-bold text-slate-800 disabled:bg-slate-50 disabled:text-slate-500"
               />
             </label>
             <div class="flex flex-wrap gap-1">
@@ -135,6 +148,7 @@
                 :key="day"
                 type="button"
                 class="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest"
+                :disabled="store.isRunning"
                 :class="
                   store.availableDays.includes(day)
                     ? 'bg-slate-800 text-white'
@@ -154,8 +168,23 @@
           <p v-else class="text-[11px] text-slate-500">{{ store.availabilityLabel }}</p>
         </div>
 
-        <label class="flex items-start gap-3 cursor-pointer">
-          <input v-model="store.deferShifts" type="checkbox" class="mt-0.5 rounded border-slate-300 text-indigo-600" />
+        <!-- Locked mid-run, and said out loud. These are inputs to the OBJECTIVE, not filters over
+             the answer: every chain already priced was priced against the old schedule, so a change
+             taken mid-run would silently mix two questions in one result table. The main panel locks
+             the same fields for the same reason. -->
+        <p v-if="showSchedule && store.isRunning" class="text-[11px] font-semibold text-amber-700 leading-relaxed">
+          Locked while a run is going. These change which chain is fastest rather than how it is displayed, so they
+          cannot be applied to chains already priced — stop, change them, and start again to price the space against the
+          new schedule.
+        </p>
+
+        <label v-if="showSchedule" class="flex items-start gap-3 cursor-pointer">
+          <input
+            v-model="store.deferShifts"
+            type="checkbox"
+            :disabled="store.isRunning"
+            class="mt-0.5 rounded border-slate-300 text-indigo-600 disabled:opacity-40"
+          />
           <span class="text-[11px] text-slate-600 leading-relaxed">
             <span class="font-bold text-slate-800">Hold egg shifts for my waking hours.</span> Costs time and is what
             most people actually do.
@@ -175,7 +204,15 @@
       -->
       <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">This machine</h3>
+          <button
+            type="button"
+            class="flex items-center gap-2 text-left"
+            :aria-expanded="showMachine"
+            @click="showMachine = !showMachine"
+          >
+            <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">This machine</h3>
+            <span class="text-[10px] font-bold text-slate-400">{{ machineSummary }} {{ showMachine ? '⌄' : '›' }}</span>
+          </button>
           <div class="flex flex-wrap gap-1">
             <button
               v-for="p in PROFILES"
@@ -195,7 +232,7 @@
             </button>
           </div>
         </div>
-        <dl class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">
+        <dl v-if="showMachine" class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">
           <div>
             <dt class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Logical cores</dt>
             <dd class="font-bold text-slate-700">{{ store.machineThreads }}</dd>
@@ -213,7 +250,7 @@
             <dd class="font-bold text-slate-700">{{ deviceMemoryLabel }}</dd>
           </div>
         </dl>
-        <p class="text-[11px] text-slate-500 leading-relaxed">
+        <p v-if="showMachine" class="text-[11px] text-slate-500 leading-relaxed">
           Cores is the one hardware figure a web page is told accurately.
           <span class="font-bold text-slate-700">Reported RAM is deliberately coarse</span> — rounded to a power of two
           and clamped to a ceiling the browser picks, so a 64 GB machine reads as whatever that ceiling is. It is an
@@ -223,8 +260,8 @@
           more workers buys more than just speed.
         </p>
 
-        <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest pt-1">Memory</h3>
-        <div class="flex flex-wrap items-end gap-4">
+        <h3 v-if="showMachine" class="text-[10px] font-black text-slate-500 uppercase tracking-widest pt-1">Memory</h3>
+        <div v-if="showMachine" class="flex flex-wrap items-end gap-4">
           <label class="space-y-1">
             <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">
               Keep per-leg detail for
@@ -248,7 +285,7 @@
             <span v-else>this browser does not report heap usage.</span>
           </p>
         </div>
-        <p class="text-[11px] text-slate-500 leading-relaxed">
+        <p v-if="showMachine" class="text-[11px] text-slate-500 leading-relaxed">
           Every chain keeps its duration no matter what — that is the answer, and it is what the leaderboard, the CSV
           totals and the checkpoint are built from. What gets dropped past this number is the per-leg timing detail for
           the chains you did not win with, which is what the runners-up table opens.
@@ -303,12 +340,13 @@
               >
             </span>
             <input
-              v-model.number="store.workerBudget"
+              :value="store.workerBudget"
               type="number"
               min="1"
               :max="store.machineThreads"
               :disabled="store.isRunning"
               class="w-full rounded-lg border-slate-200 text-sm font-bold text-slate-800 disabled:bg-slate-50 disabled:text-slate-500"
+              @change="setWorkers(($event.target as HTMLInputElement).value)"
             />
           </label>
         </div>
@@ -791,6 +829,16 @@
             />
           </div>
           <label class="flex items-start gap-3 cursor-pointer text-[11px] text-indigo-900/80">
+            <input v-model="includeCsv" type="checkbox" class="mt-0.5 rounded border-indigo-300 text-indigo-600" />
+            <span>
+              <span class="font-bold">Include the full CSV</span> — every chain this run priced, one row per leg ({{
+                store.csvRows.toLocaleString()
+              }}
+              chains). The submission above is the headline; this is the working. It is compressed before it leaves your
+              machine. Chains past the memory budget export with their per-leg cells blank.
+            </span>
+          </label>
+          <label class="flex items-start gap-3 cursor-pointer text-[11px] text-indigo-900/80">
             <input
               v-model="stampName"
               type="checkbox"
@@ -883,7 +931,11 @@ const autoPlannerStore = useAutoPlannerStore();
 const TOO_BIG_HOURS = 24 * 14;
 
 /** `pool` is one range any checkpoint may draw from; `bands` gives each checkpoint its own. */
-const spaceMode = ref<'pool' | 'bands'>('pool');
+// Bands by default. A single pooled range is the simpler thing to explain, but it is almost never
+// what someone running this mode wants: it lets every checkpoint draw from the whole range, so the
+// chain count is combinatorial in the pool size and the space is mostly chains nobody would run.
+// Bands are how the measured suggestions are expressed and how every real run here has been set up.
+const spaceMode = ref<'pool' | 'bands'>('bands');
 const bandsText = ref('185-200:5; 215-245:10; 260-300:10; 320-360:20');
 const minGap = ref(0);
 
@@ -996,6 +1048,33 @@ function applyProfile(id: ProfileId): void {
   store.legDetailBudget = p.legDetail;
 }
 
+/**
+ * Both budget cards start collapsed.
+ *
+ * They are set-once settings in a panel whose subject is the space to search, and leaving them open
+ * pushed the thing people came for below the fold. The header keeps a one-line summary so a
+ * collapsed card still says what it is holding -- a collapsed setting that hides its own value is
+ * how people end up running with a schedule they forgot they set.
+ */
+const showSchedule = ref(false);
+const showMachine = ref(false);
+
+const scheduleSummary = computed(() => {
+  const when = store.planStartIsNow ? 'no start set' : `from ${autoPlannerStore.startDate}`;
+  return `${when} · ${store.scheduleEnabled ? store.availabilityLabel : 'any hour'}`;
+});
+const machineSummary = computed(
+  () =>
+    `${store.workerBudget} workers · detail for ${store.legDetailBudget ? store.legDetailBudget.toLocaleString() : 'every'} chains`
+);
+
+/** Held to the machine's cores here as well as in the pool, so the field cannot read 19 on an
+ *  8-core box and quietly run 8. The store's value is the one the run uses either way. */
+function setWorkers(raw: string): void {
+  const n = Number(raw);
+  store.workerBudget = Number.isFinite(n) ? Math.max(1, Math.min(store.machineThreads, Math.floor(n))) : 1;
+}
+
 const rangeLo = ref(185);
 const rangeHi = ref(390);
 const rangeStep = ref(15);
@@ -1019,6 +1098,9 @@ const NICKNAME_MAX = 40;
 /** ` YYYY-MM-DD HH:MM` -- the space plus sixteen characters. */
 const STAMP_LEN = 17;
 
+/** On, like the main panel's: the per-leg rows are what make a pooled dataset worth more than a
+ *  ranking, and the whole block already sits behind an unticked opt-in. */
+const includeCsv = ref(true);
 const anonymous = ref(true);
 /** Off by default, because it is now a convenience rather than a fix.
  *
@@ -1237,7 +1319,11 @@ async function submit(): Promise<void> {
       submitMessage.value = 'Nothing to submit yet.';
       return;
     }
-    const res = await store.sendSubmission(payload);
+    // The CSV was never sent from this panel -- it called sendSubmission with one argument -- so
+    // every exhaustive row on the board reads "No CSV was attached", including the ones where the
+    // full working is most worth having. The second argument is the whole fix; the store gzips it
+    // and posts it separately, and a failed upload only downgrades the message.
+    const res = await store.sendSubmission(payload, includeCsv.value ? store.exportCsv() : undefined);
     submitOk.value = res.ok;
     submitMessage.value = res.ok ? `Thank you — ${res.message}` : `Not sent: ${res.message}`;
   } finally {
