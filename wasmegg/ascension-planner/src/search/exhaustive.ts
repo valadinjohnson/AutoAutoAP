@@ -53,13 +53,15 @@ export function exhaustiveChains(
   minAsc: number,
   maxAsc: number,
   final: number,
-  currentTE: number
+  currentTE: number,
+  limit = Infinity
 ): number[][] {
   const out: number[][] = [];
   const walk = (i: number, acc: number[]) => {
+    if (out.length >= limit) return;
     if (acc.length >= minAsc - 1 && acc.length <= maxAsc - 1 && acc.length) out.push([...acc, final]);
     if (acc.length >= maxAsc - 1) return;
-    for (let j = i; j < pool.length; j++) {
+    for (let j = i; j < pool.length && out.length < limit; j++) {
       if (pool[j] >= final) break;
       if (!acc.length ? pool[j] > currentTE : pool[j] > acc[acc.length - 1]) walk(j + 1, [...acc, pool[j]]);
     }
@@ -169,14 +171,16 @@ export function exhaustiveChainsWithGap(
   maxAsc: number,
   final: number,
   currentTE: number,
-  minGap: number
+  minGap: number,
+  limit = Infinity
 ): number[][] {
-  if (!(minGap > 0)) return exhaustiveChains(pool, minAsc, maxAsc, final, currentTE);
+  if (!(minGap > 0)) return exhaustiveChains(pool, minAsc, maxAsc, final, currentTE, limit);
   const out: number[][] = [];
   const walk = (i: number, acc: number[]) => {
+    if (out.length >= limit) return;
     if (acc.length >= minAsc - 1 && acc.length <= maxAsc - 1 && acc.length) out.push([...acc, final]);
     if (acc.length >= maxAsc - 1) return;
-    for (let j = i; j < pool.length; j++) {
+    for (let j = i; j < pool.length && out.length < limit; j++) {
       const v = pool[j];
       if (v >= final) break;
       if (!acc.length ? v > currentTE : v - acc[acc.length - 1] >= minGap) walk(j + 1, [...acc, v]);
@@ -202,7 +206,7 @@ export function countChainsWithGap(pool: number[], minAsc: number, maxAsc: numbe
   if (n === 0 || maxPick === 0) return 0;
 
   // ways[k][j]: chains of k checkpoints ending at pool[j].
-  let ways: number[][] = [];
+  const ways: number[][] = [];
   ways[1] = new Array(n).fill(1);
   let total = minPick <= 1 && 1 <= maxPick ? n : 0;
 
@@ -238,15 +242,23 @@ export function countChainsWithGap(pool: number[], minAsc: number, maxAsc: numbe
  * Bands may overlap; the strictly-increasing and `minGap` rules still apply, so an overlap simply
  * means the two checkpoints can be close, not that they can swap order.
  */
-export function bandedChains(bands: number[][], final: number, currentTE: number, minGap = 0): number[][] {
+export function bandedChains(
+  bands: number[][],
+  final: number,
+  currentTE: number,
+  minGap = 0,
+  limit = Infinity
+): number[][] {
   if (!bands.length || bands.some(b => !b.length)) return [];
   const out: number[][] = [];
   const walk = (slot: number, acc: number[]) => {
+    if (out.length >= limit) return;
     if (slot === bands.length) {
       out.push([...acc, final]);
       return;
     }
     for (const v of bands[slot]) {
+      if (out.length >= limit) return;
       if (v >= final) continue;
       const ok = acc.length ? v - acc[acc.length - 1] >= Math.max(1, minGap) : v > currentTE;
       if (ok) walk(slot + 1, [...acc, v]);

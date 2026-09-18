@@ -580,8 +580,9 @@
             <div class="flex items-center justify-center gap-1.5">
               <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Est. wall clock</span>
               <HelpTip
-                >Chains x 15 s / workers. It errs high on purpose: 15 s is the measured floor for a leg with a warm
-                prefix memo, and prefix sharing means most chains cost far less than a full simulation.</HelpTip
+                >Chains x assumed cost / workers. It errs high on purpose: the assumed cost is a cold-leg floor — 15 s
+                until something better is known, this machine's own measured or benchmarked rate afterward — and prefix
+                sharing means most chains cost far less than a full simulation.</HelpTip
               >
             </div>
             <div class="text-lg font-black tabular-nums" :class="tooBig ? 'text-red-700' : 'text-slate-900'">
@@ -593,14 +594,43 @@
               <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Assumed cost</span>
               <HelpTip
                 >What the estimate charges per chain. It starts at the 15 s assumption and switches to this machine's
-                own measured rate once the first chunk lands, so the estimate beside it stops being a guess.</HelpTip
+                own measured rate once the first chunk lands — or as soon as you press "Benchmark my PC" below, which
+                prices that first chunk right now instead of waiting for a real run.</HelpTip
               >
             </div>
-            <div class="text-lg font-black tabular-nums" :class="measuredCost ? 'text-emerald-700' : 'text-slate-900'">
+            <div
+              class="text-lg font-black tabular-nums"
+              :class="{
+                'text-emerald-700': store.rateSource === 'live',
+                'text-indigo-700': store.rateSource === 'benchmark',
+                'text-slate-900': !store.rateSource,
+              }"
+            >
               {{ measuredCost ? measuredCost.toFixed(2) + ' s' : '15 s' }}
             </div>
           </div>
         </div>
+
+        <div class="flex flex-wrap items-center gap-3 pt-1">
+          <button
+            type="button"
+            :disabled="store.isRunning || store.benchmarking || !chainCount"
+            class="px-3 py-1.5 rounded-md border border-indigo-300 text-indigo-700 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 disabled:opacity-40"
+            @click="benchmark"
+          >
+            {{ store.benchmarking ? 'Benchmarking…' : store.benchmarkedAt ? 'Re-benchmark' : 'Benchmark my PC' }}
+          </button>
+          <span v-if="store.benchmarking" class="text-[11px] text-slate-500">
+            Pricing the first {{ Math.max(store.workerBudget * 2, 32) }} chains on a throwaway pool — same as what a
+            real run's opening chunk would cost.
+          </span>
+          <span v-else-if="store.benchmarkedAt" class="text-[11px] text-slate-500">
+            {{ store.rateSource === 'live' ? 'Measured' : 'Benchmarked' }} on this machine ·
+            {{ store.benchmarkChainCount }} chains · {{ agoLabel(store.benchmarkedAt) }}
+          </span>
+        </div>
+        <p v-if="store.benchmarkError" class="text-[11px] font-semibold text-red-700">{{ store.benchmarkError }}</p>
+
         <p class="text-[11px] leading-relaxed" :class="tooBig ? 'text-red-800' : 'text-slate-500'">
           <template v-if="!poolSize">
             The pool is empty once values outside ({{ store.currentTE }}, {{ store.finalTE }}) are dropped.
@@ -609,12 +639,16 @@
             No chains: the ascension range asks for more checkpoints than {{ poolSize }} pool values can supply.
           </template>
           <template v-else-if="tooBig">
-            This will not finish. The estimate assumes 15 s per chain, which is the measured floor; prefix sharing makes
-            the real figure lower, but not by orders of magnitude. Raise the step or narrow the ascension range.
+            This will not finish. The estimate assumes {{ assumedCostLabel }} per chain{{
+              measuredCost ? '' : ', which is the measured floor'
+            }}; prefix sharing makes the real figure lower, but not by orders of magnitude. Raise the step or narrow the
+            ascension range.
           </template>
           <template v-else>
-            The estimate assumes 15 s per chain across {{ store.workersInPool }} workers and ignores prefix sharing, so
-            it errs high. Leave the tab open: a closed tab stops the workers.
+            The estimate assumes {{ assumedCostLabel }} per chain across {{ store.workersInPool }} workers and ignores
+            prefix sharing, so it errs high.
+            <template v-if="!measuredCost">Benchmark this machine above for a real number.</template>
+            Leave the tab open: a closed tab stops the workers.
           </template>
         </p>
       </div>
@@ -658,6 +692,18 @@
           </p>
         </div>
       </details>
+
+      <label class="flex items-start gap-3 cursor-pointer">
+        <input
+          v-model="store.keepAwake"
+          type="checkbox"
+          class="mt-0.5 rounded border-slate-300 text-indigo-600"
+        />
+        <span class="text-[11px] text-slate-600 leading-relaxed">
+          <span class="font-bold text-slate-800">Keep my PC awake.</span> A run is hours long; if the machine sleeps,
+          every worker freezes until you wake it back up. Turn this off if you'd rather manage sleep yourself.
+        </span>
+      </label>
 
       <div class="flex flex-wrap gap-3">
         <button
@@ -1222,6 +1268,10 @@ const suggestRange = computed<[number, number]>(() => [
 ]);
 
 const measuredCost = computed(() => (store.secondsPerChain > 0 ? store.secondsPerChain : 0));
+/** What the warning paragraph should say it's charging per chain — the real number once one exists,
+ *  the fallback constant otherwise. Kept as a label rather than a bare number so the copy reads the
+ *  same whether it's "15 s" or "2.34 s". */
+const assumedCostLabel = computed(() => (measuredCost.value ? `${measuredCost.value.toFixed(2)} s` : '15 s'));
 
 const hours = computed(() => estimateHours(chainCount.value, store.workersInPool, measuredCost.value || undefined));
 
@@ -1272,6 +1322,9 @@ watch(
 
 onMounted(() => {
   void store.refreshSavedRuns(props.playerId);
+  // A rate measured in an earlier session beats the 15 s assumption on a fresh page load, whether it
+  // came from a benchmark or from a real run that finished a chunk.
+  store.restoreBenchmark(props.playerId);
   readHeap();
   // Five seconds, not one: it is a slow-moving gauge, and polling it on the frame timer would put a
   // reactive write in front of a run that is already competing for the main thread.
@@ -1279,8 +1332,18 @@ onMounted(() => {
 });
 onUnmounted(() => heapTimer && clearInterval(heapTimer));
 
-async function start(): Promise<void> {
-  await store.startExhaustive(props.playerId, {
+/** The bands-vs-pool configuration `startExhaustive` and `benchmarkMachine` both need — one literal,
+ *  so the two can never be asked to look at different spaces. */
+function currentSpec(): {
+  lo: number;
+  hi: number;
+  step: number;
+  minAsc: number;
+  maxAsc: number;
+  minGap: number;
+  bands?: number[][];
+} {
+  return {
     lo: rangeLo.value,
     hi: rangeHi.value,
     step: rangeStep.value,
@@ -1288,7 +1351,35 @@ async function start(): Promise<void> {
     maxAsc: maxAsc.value,
     minGap: minGap.value,
     ...(spaceMode.value === 'bands' ? { bands: bands.value } : {}),
-  });
+  };
+}
+
+async function start(): Promise<void> {
+  await store.startExhaustive(props.playerId, currentSpec());
+}
+
+async function benchmark(): Promise<void> {
+  await store.benchmarkMachine(props.playerId, currentSpec());
+}
+
+/** Coarse "Xs/Xm/Xh ago" for the benchmark caption. Backed by its own slow ticker rather than the
+ *  run's 1 s one, which only exists while `store.isRunning` — a benchmarked-but-not-yet-started rate
+ *  needs its age to keep advancing too. */
+const nowForAge = ref(Date.now());
+let ageTimer: ReturnType<typeof setInterval> | null = null;
+onMounted(() => {
+  ageTimer = setInterval(() => (nowForAge.value = Date.now()), 30_000);
+});
+onUnmounted(() => ageTimer && clearInterval(ageTimer));
+
+function agoLabel(ms: number): string {
+  const diffS = Math.max(0, Math.round((nowForAge.value - ms) / 1000));
+  if (diffS < 60) return `${diffS}s ago`;
+  const diffM = Math.round(diffS / 60);
+  if (diffM < 60) return `${diffM}m ago`;
+  const diffH = Math.round(diffM / 60);
+  if (diffH < 48) return `${diffH}h ago`;
+  return `${Math.round(diffH / 24)}d ago`;
 }
 
 async function save(): Promise<void> {

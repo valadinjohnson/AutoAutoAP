@@ -82,6 +82,22 @@ describe('exhaustiveChains', () => {
       expect(exhaustiveChains(pool, lo, hi, 490, 100)).toHaveLength(countChains(pool.length, lo, hi));
     }
   });
+
+  it('stops the walk at limit instead of building the whole space', () => {
+    const pool = [200, 220, 240, 260, 280];
+    const full = exhaustiveChains(pool, 2, 6, 490, 100);
+    const limited = exhaustiveChains(pool, 2, 6, 490, 100, 4);
+    expect(limited).toHaveLength(4);
+    // A prefix of the unbounded result, not a differently-ordered subset — a benchmark reading the
+    // first K chains must see the same K chains a real (unbounded) run would price first.
+    expect(limited).toEqual(full.slice(0, 4));
+  });
+
+  it('a limit at or past the true count changes nothing', () => {
+    const pool = [200, 300, 400];
+    const full = exhaustiveChains(pool, 2, 2, 490, 100);
+    expect(exhaustiveChains(pool, 2, 2, 490, 100, 1000)).toEqual(full);
+  });
 });
 
 describe('countChains', () => {
@@ -176,6 +192,13 @@ describe('exhaustiveChainsWithGap', () => {
     ]);
     expect(exhaustiveChainsWithGap(wide, 7, 7, 490, 100, SMALLEST_MEASURED_GAP + 1)).toEqual([]);
   });
+
+  it('stops the walk at limit instead of building the whole space', () => {
+    const full = exhaustiveChainsWithGap(pool, 2, 6, 490, 100, 15);
+    const limited = exhaustiveChainsWithGap(pool, 2, 6, 490, 100, 15, 3);
+    expect(limited).toHaveLength(3);
+    expect(limited).toEqual(full.slice(0, 3));
+  });
 });
 
 describe('countChainsWithGap', () => {
@@ -240,6 +263,18 @@ describe('bandedChains', () => {
   it('is empty rather than wrong when a band has nothing in it', () => {
     expect(bandedChains([[200], []], 490, 100)).toEqual([]);
     expect(bandedChains([], 490, 100)).toEqual([]);
+  });
+
+  it('stops the walk at limit instead of building the whole space', () => {
+    const bands = [
+      [185, 190, 195],
+      [220, 225, 230],
+      [260, 265, 270],
+    ];
+    const full = bandedChains(bands, 490, 100);
+    const limited = bandedChains(bands, 490, 100, 0, 5);
+    expect(limited).toHaveLength(5);
+    expect(limited).toEqual(full.slice(0, 5));
   });
 });
 

@@ -664,6 +664,19 @@
         </div>
       </div>
 
+      <label class="flex items-start gap-3 cursor-pointer">
+        <input
+          v-model="store.keepAwake"
+          type="checkbox"
+          class="mt-0.5 rounded border-slate-300 text-indigo-600"
+        />
+        <span class="text-[11px] text-slate-600 leading-relaxed">
+          <span class="font-bold text-slate-800">Keep my PC awake.</span> A run can take hours; if the machine
+          sleeps, every worker freezes until you wake it back up. Turn this off if you'd rather manage sleep
+          yourself.
+        </span>
+      </label>
+
       <!-- Run / stop -->
       <div class="flex gap-3">
         <button

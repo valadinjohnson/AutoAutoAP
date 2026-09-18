@@ -14,14 +14,15 @@
  * itself calls is already Pinia-free.
  */
 import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { getSimulationContext, createBaseEngineState } from '@/engine/adapter';
 import { getLocalTimestampInTimezone } from '@/lib/events';
 import { hashID } from '@/lib/storage/db';
 import { runChainSearch, type CacheEntry } from '@/search/driver';
 import { findStartingChain, planCoarseGrid } from '@/search/coarse';
 import { createChainSearchPool, type ChainSearchPool } from '@/search/pool';
-import { hardwareThreads, maxPoolSize } from '@/search/batch';
+import { hardwareThreads, maxPoolSize, clampPoolSize } from '@/search/batch';
+import { loadChainBenchmark, saveChainBenchmark } from '@/lib/chainBenchmarkCache';
 import { EFFORT, estimateChains } from '@/search/effort';
 import {
   buildCheckpoint,
@@ -97,6 +98,21 @@ const DEFAULT_LEG_DETAIL_BUDGET = (() => {
   if (!gb) return 2000;
   return Math.max(500, Math.min(8000, Math.round(gb * 500)));
 })();
+
+/** Shared by `startExhaustive` and `benchmarkMachine` — the exhaustive search's whole configuration,
+ *  the browser form of the CLI's `--range`/`--bands` flags. */
+export interface ExhaustiveSpec {
+  lo: number;
+  hi: number;
+  step: number;
+  minAsc: number;
+  maxAsc: number;
+  /** Minimum TE between consecutive checkpoints. 0 leaves the enumeration unconstrained. */
+  minGap?: number;
+  /** Per-checkpoint bands. When present these replace the single pool entirely, and the
+   *  ascension count is `bands.length + 1` rather than the min/max range. */
+  bands?: number[][];
+}
 
 export const useChainSearchStore = defineStore('chainSearch', () => {
   const effort = ref<EffortTier>('balanced');
@@ -222,6 +238,15 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     () => !isRunning.value && !error.value && !stoppedEarly.value && stage.value.startsWith('done')
   );
   /**
+   * Whether a run should take the screen Wake Lock (see `holdScreenLock` below). The operator's
+   * call, not a silent default -- some people run this on a laptop they need to actually use, or on
+   * a machine where the OS sleep timer is already handled some other way. On by default because
+   * the failure mode it prevents (the machine sleeping and freezing every worker for hours,
+   * unnoticed) is worse than the failure mode it risks (a screen kept on that didn't need to be).
+   */
+  const keepAwake = ref(true);
+
+  /**
    * Workers this run may use. The knob, as opposed to `workersInPool`, which is the readback.
    *
    * Separate because the two answer different questions and a run can make them disagree: the pool
@@ -235,6 +260,18 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
   /** Measured on THIS machine, from this run's own batches. Not an assumption carried over from the
    *  CLI's 20-core box. */
   const secondsPerChain = ref(0);
+  /** Where `secondsPerChain` came from: a live run's own first chunk, or a "Benchmark my PC" probe
+   *  run before anything started. Both write the identical quantity; this is only so the UI can say
+   *  which one it is showing. */
+  const rateSource = ref<'benchmark' | 'live' | null>(null);
+  /** A "Benchmark my PC" probe in flight. Mutually exclusive with `isRunning`: only one pool runs at
+   *  a time. */
+  const benchmarking = ref(false);
+  const benchmarkError = ref<string | null>(null);
+  /** `Date.now()` of the last benchmark probe (button-triggered or restored from a previous
+   *  session), for the panel's "benchmarked Xs ago" caption. 0 means never. */
+  const benchmarkedAt = ref(0);
+  const benchmarkChainCount = ref(0);
   const startedAt = ref(0);
   /** A checkpoint from a previous session that matches the current inputs, if any. */
   const resumable = ref<SearchCheckpoint | null>(null);
@@ -310,6 +347,9 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
   let lastRateChains = 0;
   let partitionHash = '';
   let runFingerprint = '';
+  /** Set at the top of `startExhaustive`/`start`, so `noteRate` can persist the first live-measured
+   *  rate without every caller having to thread a player ID through it. */
+  let currentPlayerId = '';
 
   /**
    * Recent-weighted s/chain, NOT a lifetime average, and measured per PHASE.
@@ -334,11 +374,32 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     const d = done - lastRateChains;
     if (d <= 0) return;
     const observed = (now - lastRateAt) / 1000 / d;
+    const wasUnset = !secondsPerChain.value;
     secondsPerChain.value = secondsPerChain.value
       ? secondsPerChain.value * (1 - RATE_ALPHA) + observed * RATE_ALPHA
       : observed;
     lastRateChains = done;
     lastRateAt = now;
+
+    // The first real measurement for this run beats whatever a pre-run benchmark guessed — record
+    // where it came from, and persist it the same way `benchmarkMachine` does, so a live-measured
+    // rate also survives a reload rather than only the button's own probe.
+    if (wasUnset) {
+      rateSource.value = 'live';
+      benchmarkedAt.value = now;
+      benchmarkChainCount.value = done;
+      if (currentPlayerId) {
+        saveChainBenchmark(currentPlayerId, {
+          secondsPerChain: secondsPerChain.value,
+          source: 'live',
+          at: now,
+          chainCount: done,
+          workers: workersInPool.value,
+          currentTE: currentTE.value,
+          finalTE: finalTE.value,
+        });
+      }
+    }
   }
 
   /**
@@ -1073,49 +1134,61 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     bestLegs.value = bestEntry.legs;
   }
 
-  async function startExhaustive(
-    playerId: string,
-    spec: {
-      lo: number;
-      hi: number;
-      step: number;
-      minAsc: number;
-      maxAsc: number;
-      /** Minimum TE between consecutive checkpoints. 0 leaves the enumeration unconstrained. */
-      minGap?: number;
-      /** Per-checkpoint bands. When present these replace the single pool entirely, and the
-       *  ascension count is `bands.length + 1` rather than the min/max range. */
-      bands?: number[][];
-    }
-  ): Promise<void> {
-    if (isRunning.value) return;
-
+  /**
+   * Bands-vs-pool chain building, shared by `startExhaustive` and `benchmarkMachine` so the two can
+   * never enumerate different spaces for what is supposed to be the same configuration.
+   *
+   * `limit` bounds the DFS walk itself (see exhaustive.ts), not a slice taken after the fact — the
+   * benchmark passes one specifically so a space of billions of chains never gets enumerated just to
+   * sample the first few dozen.
+   */
+  function buildChainsForSpec(spec: ExhaustiveSpec, limit = Infinity): { chains: number[][]; error: string | null } {
     const minGap = Math.max(0, Math.floor(spec.minGap ?? 0));
-    let chains: number[][];
 
     if (spec.bands?.length) {
-      chains = sortByPrefix(bandedChains(spec.bands, finalTE.value, currentTE.value, minGap));
+      const chains = sortByPrefix(bandedChains(spec.bands, finalTE.value, currentTE.value, minGap, limit));
       if (!chains.length) {
-        error.value =
-          'No chains: the bands leave nothing strictly increasing once the minimum gap and your current TE are applied.';
-        return;
+        return {
+          chains: [],
+          error:
+            'No chains: the bands leave nothing strictly increasing once the minimum gap and your current TE are applied.',
+        };
       }
-    } else {
-      const poolValues = buildPool({ lo: spec.lo, hi: spec.hi, step: spec.step }, currentTE.value, finalTE.value);
-      if (!poolValues.length) {
-        error.value = `The pool is empty once values outside (${currentTE.value}, ${finalTE.value}) are dropped.`;
-        return;
-      }
-      chains = sortByPrefix(
-        exhaustiveChainsWithGap(poolValues, spec.minAsc, spec.maxAsc, finalTE.value, currentTE.value, minGap)
-      );
-      if (!chains.length) {
-        error.value = minGap
-          ? `No chains: nothing in the pool is ${minGap} TE apart at that ascension count.`
-          : 'No chains: the ascension range asks for more checkpoints than the pool can supply.';
-        return;
-      }
+      return { chains, error: null };
     }
+
+    const poolValues = buildPool({ lo: spec.lo, hi: spec.hi, step: spec.step }, currentTE.value, finalTE.value);
+    if (!poolValues.length) {
+      return {
+        chains: [],
+        error: `The pool is empty once values outside (${currentTE.value}, ${finalTE.value}) are dropped.`,
+      };
+    }
+    const chains = sortByPrefix(
+      exhaustiveChainsWithGap(poolValues, spec.minAsc, spec.maxAsc, finalTE.value, currentTE.value, minGap, limit)
+    );
+    if (!chains.length) {
+      return {
+        chains: [],
+        error: minGap
+          ? `No chains: nothing in the pool is ${minGap} TE apart at that ascension count.`
+          : 'No chains: the ascension range asks for more checkpoints than the pool can supply.',
+      };
+    }
+    return { chains, error: null };
+  }
+
+  async function startExhaustive(playerId: string, spec: ExhaustiveSpec): Promise<void> {
+    if (isRunning.value) return;
+    currentPlayerId = playerId;
+
+    const minGap = Math.max(0, Math.floor(spec.minGap ?? 0));
+    const built = buildChainsForSpec(spec);
+    if (built.error) {
+      error.value = built.error;
+      return;
+    }
+    const chains = built.chains;
 
     // Stated before a single chain is priced, so the submission says what was ASKED for even when
     // the run is stopped halfway. chainsPriced and stoppedEarly are filled in at the end.
@@ -1145,6 +1218,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     if (minGap) runLog.value.push(`minimum gap ${minGap} TE between checkpoints`);
     runLog.value.push(`${chains.length.toLocaleString()} chains, no pruning`);
     secondsPerChain.value = 0;
+    rateSource.value = null;
     liveCache = [];
     coarseCache = [];
     csvRows.value = 0;
@@ -1172,7 +1246,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     // chain in memory and wrote nothing until the operator pressed Save, so an unattended machine
     // that restarted lost the lot. The staged search has always checkpointed on a timer. This now
     // does the same, and replays what it finds instead of re-simulating it.
-    let alreadyPriced = new Map<string, CacheEntry>();
+    const alreadyPriced = new Map<string, CacheEntry>();
     try {
       partitionHash = await hashID(playerId);
       runFingerprint = fingerprint(playerId);
@@ -1265,6 +1339,75 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
   }
 
   /**
+   * Prices the same first chunk `startExhaustive` would, through a throwaway pool, and uses the
+   * result to seed `secondsPerChain` before the operator commits to a real run.
+   *
+   * Deliberately not "a chain per worker" or any other synthetic probe shape: `secondsPerChain` is a
+   * specific quantity (wall clock for one parallel batch ÷ chains it contained), and matching the
+   * real run's own chunk size and prefix-sorted ordering is what makes this number mean the same
+   * thing as "what the live rate would read after one chunk" rather than a differently-biased guess.
+   */
+  async function benchmarkMachine(playerId: string, spec: ExhaustiveSpec): Promise<void> {
+    if (isRunning.value || benchmarking.value) return;
+
+    benchmarking.value = true;
+    benchmarkError.value = null;
+    let bench: ChainSearchPool | null = null;
+    try {
+      const chunkSize = Math.max(clampPoolSize(workerBudget.value) * 2, 32);
+      const built = buildChainsForSpec(spec, chunkSize);
+      if (built.error) {
+        benchmarkError.value = built.error;
+        return;
+      }
+
+      bench = await createChainSearchPool(collectInputs(), { size: workerBudget.value });
+      const probeStartedAt = performance.now();
+      const { results } = await bench.evaluate(built.chains);
+      const elapsedSeconds = (performance.now() - probeStartedAt) / 1000;
+
+      if (!results.length) {
+        benchmarkError.value = 'No chains in this batch could be evaluated — nothing to benchmark.';
+        return;
+      }
+
+      secondsPerChain.value = elapsedSeconds / results.length;
+      rateSource.value = 'benchmark';
+      benchmarkedAt.value = Date.now();
+      benchmarkChainCount.value = results.length;
+      saveChainBenchmark(playerId, {
+        secondsPerChain: secondsPerChain.value,
+        source: 'benchmark',
+        at: benchmarkedAt.value,
+        chainCount: results.length,
+        workers: workerBudget.value,
+        currentTE: currentTE.value,
+        finalTE: finalTE.value,
+      });
+    } catch (e) {
+      benchmarkError.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      bench?.terminate();
+      benchmarking.value = false;
+    }
+  }
+
+  /**
+   * Restores a rate measured in an earlier session, so the estimate does not fall back to the 15 s
+   * assumption on every reload. Only ever applied on top of "nothing measured yet" — a rate this
+   * session has already established, live or benchmarked, is never overwritten by a stale one.
+   */
+  function restoreBenchmark(playerId: string): void {
+    if (isRunning.value || secondsPerChain.value) return;
+    const cached = loadChainBenchmark(playerId);
+    if (!cached) return;
+    secondsPerChain.value = cached.secondsPerChain;
+    rateSource.value = cached.source;
+    benchmarkedAt.value = cached.at;
+    benchmarkChainCount.value = cached.chainCount;
+  }
+
+  /**
    * Keep the browser from freezing this tab while a run is in flight.
    *
    * Chromium's freezing policy has an explicit opt-out list, and one entry on it is a page "holding
@@ -1330,7 +1473,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
 
   async function holdScreenLock(): Promise<void> {
     const wakeLock = (navigator as Navigator & { wakeLock?: WakeLock }).wakeLock;
-    if (!wakeLock || screenLock || document.visibilityState !== 'visible') return;
+    if (!keepAwake.value || !wakeLock || screenLock || document.visibilityState !== 'visible') return;
     try {
       screenLock = await wakeLock.request('screen');
       // The browser releases it on its own when the tab hides; drop our handle so the
@@ -1347,6 +1490,14 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     void screenLock?.release().catch(() => {});
     screenLock = null;
   }
+
+  /** Flipping the toggle mid-run takes effect immediately, rather than waiting for the next
+   *  visibility change to notice. */
+  watch(keepAwake, on => {
+    if (!isRunning.value) return;
+    if (on) void holdScreenLock();
+    else dropScreenLock();
+  });
 
   /**
    * Checkpoint when the tab is hidden, not only on the timer.
@@ -1365,6 +1516,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
 
   async function start(playerId: string, options: { resume?: boolean } = {}): Promise<void> {
     if (isRunning.value) return;
+    currentPlayerId = playerId;
 
     error.value = null;
     stopRequested.value = false;
@@ -1377,6 +1529,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     // A staged run proves nothing over a stated space, and must not inherit the last one's.
     searchSpace.value = null;
     secondsPerChain.value = 0;
+    rateSource.value = null;
     // A fresh run's export must not carry the previous run's rows: the settings that give every
     // duration its meaning (plan start, excluded hours, final target) may all have changed.
     liveCache = [];
@@ -1533,6 +1686,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       // covered its whole trajectory, which is exactly what the resume banner promises. Saying
       // plain "done" next to "0 / ~404 chains" reads as a crash, so say what happened.
       secondsPerChain.value = 0;
+      rateSource.value = null;
       // Force a final write marked complete, so the panel stops offering a finished run as
       // something to resume - which is what made it look like Resume had done nothing.
       //
@@ -1679,7 +1833,13 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     stoppedEarly,
     workersInPool,
     secondsPerChain,
+    rateSource,
+    benchmarking,
+    benchmarkError,
+    benchmarkedAt,
+    benchmarkChainCount,
     resumable,
+    keepAwake,
     // derived
     progressFraction,
     secondsRemaining,
@@ -1708,6 +1868,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     // actions
     start,
     startExhaustive,
+    benchmarkMachine,
+    restoreBenchmark,
     stop,
     checkResumable,
     discardCheckpoint,
