@@ -11,9 +11,23 @@
 # builds this workspace only. They do not conflict; the base directory decides which is read.
 
 [build]
-  # Relative to the base directory. `pnpm install` has already run at the repo root by this point
-  # -- Netlify sees the pnpm workspace and installs all 23 projects -- so this only has to build.
-  command = "pnpm build"
+  # THE CODEGEN IS NOT OPTIONAL, and it is why a plain `pnpm build` fails on a fresh clone.
+  #
+  # `lib/proto/index.js` and its .d.ts are GENERATED from protobuf/*.proto by pbjs/pbts, and
+  # lib/proto/.gitignore keeps them out of the repo -- 4 MB of machine-written JavaScript that would
+  # otherwise be committed and re-committed. A developer's machine has them because `make` ran there
+  # once; a build box cloning the repo does not. Without them `vue-tsc` reports 71 errors across 29
+  # files, every one of them "Cannot find module '../proto'" or a downstream implicit-any, which
+  # reads like the app is broken rather than like a file is missing.
+  #
+  # `make -C ../../lib` is the same target the repo's own Makefiles use, so this does not fork the
+  # build into a second recipe that can drift from the first. It is incremental: the proto files do
+  # not change between deploys, but the generated output is never cached here, so it runs each time
+  # and costs seconds.
+  #
+  # `pnpm install` has already run at the repo root by this point -- Netlify sees the pnpm workspace
+  # and installs all 23 projects, which is where lib's pbjs/pbts come from.
+  command = "make -C ../../lib && pnpm build"
   publish = "dist"
 
 [build.environment]
