@@ -170,14 +170,7 @@ export function virtueInventory(rawBackup: unknown): { artifacts: InventoryCount
   const artifacts = new Map<string, Meta>();
   const stones = new Map<string, Meta>();
   if (!Array.isArray(items) || !items.length) return { artifacts: [], stones: [] };
-  const bump = (
-    m: Map<string, Meta>,
-    label: string,
-    n: number,
-    familyId?: string,
-    tier?: number,
-    rarity?: number
-  ) => {
+  const bump = (m: Map<string, Meta>, label: string, n: number, familyId?: string, tier?: number, rarity?: number) => {
     const cur = m.get(label);
     if (cur) cur.count += n;
     else m.set(label, { count: n, familyId, tier, rarity });
@@ -185,10 +178,10 @@ export function virtueInventory(rawBackup: unknown): { artifacts: InventoryCount
   /** Resolve one spec to its game-data tier, or null when the data does not know it. */
   const resolve = (spec: { name?: number; level?: number } | undefined) =>
     spec
-      ? allPossibleTiers.find(
+      ? (allPossibleTiers.find(
           (t: { afx_id: number; afx_level: number; family: { id: string }; tier_number: number }) =>
             t.afx_id === spec.name && t.afx_level === spec.level
-        ) ?? null
+        ) ?? null)
       : null;
 
   for (const raw of items) {
@@ -340,7 +333,31 @@ function legRow(
     .join(',');
 }
 
-export function buildChainsCsv(entries: CacheEntry[], meta: CsvMeta): string {
+/**
+ * Rows per emitted chunk. Chosen so a chunk is on the order of a hundred kilobytes: small enough
+ * that the row strings inside it are collected promptly, large enough that a 100k-chain run yields
+ * a few hundred chunks rather than a few hundred thousand.
+ */
+export const CHUNK_ROWS = 2000;
+
+/**
+ * The CSV, a chunk at a time.
+ *
+ * WHY THIS IS A GENERATOR. The straightforward version built every row into one `string[]` and
+ * returned `lines.join('\n')`, which is three copies of the file alive at once: the array of row
+ * strings (each with its own object header, and there are several per chain), the joined string,
+ * and then the Blob built from it. On an Insane run that is not a rounding error -- 11,000 chains
+ * is 15.3 MB of text, and the runs this panel exists for are an order of magnitude past that, so
+ * the peak lands in the hundreds of megabytes and the tab is killed by the browser before the
+ * download starts. Reported from Windows as "This page is having a problem /
+ * Crashpad_HandlerDidNotRespond", which is the renderer dying rather than anything in this code
+ * throwing.
+ *
+ * Yielding lets the caller hand each chunk to a Blob and drop it. The Blob still holds the whole
+ * file, but once -- as UTF-8 bytes the browser can spill to disk -- instead of three times over in
+ * the JS heap.
+ */
+export function* chainsCsvChunks(entries: CacheEntry[], meta: CsvMeta): Generator<string> {
   const tz = meta.timezone;
   const ranked = [...entries].sort((a, b) => a.seconds - b.seconds);
   const bestSeconds = ranked.length ? ranked[0].seconds : 0;
@@ -380,13 +397,31 @@ export function buildChainsCsv(entries: CacheEntry[], meta: CsvMeta): string {
     const gapDays = (entry.seconds - bestSeconds) / 86400;
     if (!entry.legs.length) {
       lines.push(legRow(rank, chainText, chain.length, totalDays, gapDays, '', null, tz));
-      continue;
+    } else {
+      entry.legs.forEach((leg, i) => {
+        lines.push(legRow(rank, chainText, chain.length, totalDays, gapDays, i, leg, tz));
+      });
     }
-    entry.legs.forEach((leg, i) => {
-      lines.push(legRow(rank, chainText, chain.length, totalDays, gapDays, i, leg, tz));
-    });
+    // Flushed between chains, never inside one: a chunk boundary in the middle of a chain's legs
+    // would still produce a correct file, but it makes the buffer length depend on leg count and
+    // there is no reason to pay that for nothing.
+    if (lines.length >= CHUNK_ROWS) {
+      yield lines.join('\n') + '\n';
+      lines.length = 0;
+    }
   }
 
   // Trailing newline: some spreadsheet importers drop the last row without one.
-  return lines.join('\n') + '\n';
+  if (lines.length) yield lines.join('\n') + '\n';
+}
+
+/**
+ * The whole CSV as one string.
+ *
+ * Kept for the callers that genuinely need one -- the submission path scrubs it with a regex and
+ * gzips it, both of which want text -- and for tests. The DOWNLOAD path should use the generator
+ * above instead; see the note there about what building this costs on a large run.
+ */
+export function buildChainsCsv(entries: CacheEntry[], meta: CsvMeta): string {
+  return [...chainsCsvChunks(entries, meta)].join('');
 }

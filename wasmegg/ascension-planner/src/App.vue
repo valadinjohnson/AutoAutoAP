@@ -436,8 +436,16 @@
       </div>
 
       <!-- Insane mode. URL only (`?insane=1`), never linked: every knob on it overrides a default
-           that the main panel's measured accuracy figures were taken with. -->
-      <div v-if="insaneMode && playerId && !loading">
+           that the main panel's measured accuracy figures were taken with.
+
+           NOT on the leaderboard tab. This branch heads the v-if chain below, so an unscoped
+           `insaneMode` made every later branch unreachable: with ?insane=1 set, clicking
+           Leaderboard moved the tab highlight and went on rendering the Insane panel, which read
+           as "the site only shows the insane calculator". Insane replaces Chain Search; it does
+           not replace the board. Excluded by name rather than pinned to the automatic tab so the
+           panel stays where it has always been -- visible as soon as a backup loads, without
+           having to find the right tab first. -->
+      <div v-if="insaneMode && plannerTab !== 'leaderboard' && playerId && !loading">
         <InsanePanel :player-id="playerId" />
       </div>
 
@@ -664,6 +672,25 @@ const insaneMode = (() => {
   const params = new URLSearchParams(window.location.search);
   return params.get('insane') === '1' || window.location.hash.replace(/^#\/?/, '') === 'insane';
 })();
+
+/**
+ * In Insane mode, land on the Auto Planner rather than on Manual.
+ *
+ * The tab defaults to Manual, and every path that finishes loading a backup or a plan sets it back
+ * to Manual -- reasonable defaults for the normal app, and wrong for a URL whose entire purpose is
+ * the exhaustive panel. Someone opening `?insane=1` had to find the right tab before seeing the
+ * thing they came for.
+ *
+ * Driven off `loading` rather than set once at setup, because those handlers run AFTER a backup
+ * finishes and would otherwise undo a one-shot switch. It only fires on the load finishing, so a
+ * deliberate click on Manual afterwards is respected until the next load.
+ */
+if (insaneMode) {
+  plannerTab.value = 'automatic';
+  watch(loading, (now, before) => {
+    if (before && !now) plannerTab.value = 'automatic';
+  });
+}
 const virtueStore = useVirtueStore();
 const fuelTankStore = useFuelTankStore();
 const truthEggsStore = useTruthEggsStore();

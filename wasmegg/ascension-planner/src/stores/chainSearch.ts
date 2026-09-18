@@ -34,6 +34,7 @@ import {
 } from '@/search/persistence';
 import {
   buildChainsCsv,
+  chainsCsvChunks,
   describeLoadoutSlots,
   describeVirtueInventory,
   formatInZone,
@@ -46,6 +47,7 @@ import {
   buildSubmission,
   scrubIdentifiers,
   submissionFilename,
+  summariseProof,
   type SearchSpace,
   type Submission,
 } from '@/search/submission';
@@ -53,6 +55,7 @@ import { describeAvailability, isConstrained, type Availability } from '@/search
 import { missedMilestones, usableMilestones, type Milestone } from '@/search/milestones';
 import { defaultSeedChain, seedChainIssue, usableCheckpoints, fitSeedToLimits } from '@/search/seedChain';
 import { buildPool, exhaustiveChainsWithGap, bandedChains, sortByPrefix } from '@/search/exhaustive';
+import { applyLegBudget, estimateLegBytes } from '@/search/legBudget';
 import { summariseEpicResearch, summariseColleggtibles } from '@/search/progression';
 import { listRuns, saveRun, loadRun, deleteRun, defaultRunLabel, type RunSummary } from '@/search/runLibrary';
 import { epicResearchDefs } from '@/lib/epicResearch';
@@ -79,6 +82,21 @@ const RATE_ALPHA = 0.3;
 /** How often to recompute the runners-up table. Slower than the batch rate on purpose — see
  *  `refreshShortlist`. */
 const SHORTLIST_INTERVAL_MS = 30_000;
+
+/**
+ * Chains that keep their per-leg detail by default. See `legDetailBudget`.
+ *
+ * Scaled off the machine where the browser will tell us about it. `navigator.deviceMemory` is a
+ * coarse, deliberately-fuzzed figure -- 0.25, 0.5, 1, 2, 4, 8 -- and capped at 8 by the spec so it
+ * cannot be used to fingerprint a big workstation, which is fine here: the question is only whether
+ * this is a 4 GB laptop or something with room to spare. Unavailable in Safari and Firefox, where
+ * the middle value is the honest guess.
+ */
+const DEFAULT_LEG_DETAIL_BUDGET = (() => {
+  const gb = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  if (!gb) return 2000;
+  return Math.max(500, Math.min(8000, Math.round(gb * 500)));
+})();
 
 export const useChainSearchStore = defineStore('chainSearch', () => {
   const effort = ref<EffortTier>('balanced');
@@ -617,10 +635,59 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
    */
   const pricedChains = ref<PricedChain[]>([]);
 
+  /**
+   * How many chains keep their PER-LEG DETAIL in memory. 0 means all of them.
+   *
+   * This is the run's memory budget, expressed in the unit the run is actually made of. A priced
+   * chain is two numbers -- its key and its duration -- plus a `legs` array that is most of its
+   * weight: each leg carries its twelve shifts as objects, so the detail is on the order of
+   * kilobytes per chain while the answer is on the order of tens of bytes.
+   *
+   * An overnight exhaustive run prices hundreds of thousands of chains, and keeping full detail
+   * for every one of them is what makes a tab die at 4am with no error -- the renderer is killed,
+   * which is why the page comes back as "This page is having a problem" rather than anything this
+   * code could catch and report.
+   *
+   * THE CHECKPOINT HAS ALWAYS DONE THIS. `buildCheckpoint` writes `durations` for every chain and
+   * `bestLegs` for one, and `restoreEntries` brings the rest back with `legs: []` -- so leg-less
+   * entries are a shape this codebase already produces, already resumes from, and already renders
+   * (the CSV prints blank per-leg cells and says why). All this does is stop the IN-MEMORY cache
+   * being the one place that keeps everything.
+   *
+   * WHAT IS LOST, stated plainly: the runners-up table can only show per-leg timings for chains
+   * still holding detail. The kept set is the FASTEST ones, which is what that table shows, so in
+   * practice the loss lands on chains nobody was going to open.
+   */
+  const legDetailBudget = ref(DEFAULT_LEG_DETAIL_BUDGET);
+
+  /** Chains currently holding per-leg detail, and a measured estimate of what that costs. */
+  const legsHeld = ref(0);
+  const legDetailBytes = ref(0);
+
+  /**
+   * Apply the budget to both caches.
+   *
+   * Runs on the shortlist's beat rather than per batch: the rule is an O(n log n) pass over the
+   * whole cache, which is exactly what `pickShortlist` already costs there, and doing it per batch
+   * would put that on the hot path for nothing -- memory freed a few seconds later is still freed
+   * long before it matters.
+   *
+   * The rule itself, and why it keeps the fastest rather than the newest, is in search/legBudget.ts.
+   */
+  function pruneLegDetail(): void {
+    const entries = [...liveCache, ...coarseCache];
+    const { held } = applyLegBudget(entries, legDetailBudget.value);
+    legsHeld.value = held;
+    legDetailBytes.value = estimateLegBytes(entries, held);
+  }
+
   function refreshShortlist(force = false): void {
     const now = Date.now();
     if (!force && now - lastShortlistAt < SHORTLIST_INTERVAL_MS) return;
     lastShortlistAt = now;
+    // Before the views are built, so the table is built from what is actually being kept rather
+    // than from detail that is about to be dropped underneath it.
+    pruneLegDetail();
     const entries = allEntries();
     shortlist.value = buildView(entries, shortlistView.value, {
       planStart: planStartUsed.value || planStart.value,
@@ -733,7 +800,22 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       // Null for a checkpoint replay, and left off entirely in that case, so the board never reads
       // "0 minutes for 400 chains" as a very fast machine.
       ...(runCost.value ? { run: runCost.value } : {}),
+      // Omitted alongside a space, for the reason `seed` documents: an exhaustive run enumerates
+      // rather than descends, so it has no starting guess to report and the typed chain would be
+      // a starting point the search never used.
+      ...(searchSpace.value ? {} : { seed: [...seedChain.value] }),
       ...(searchSpace.value ? { space: searchSpace.value } : {}),
+      // Only alongside a space. The block describes the distribution over an ENUMERATED set, and
+      // the same numbers taken from a staged run would be the distribution over whatever the
+      // heuristic chose to look at -- a spread that says more about the pruning than the game.
+      ...(searchSpace.value
+        ? {
+            proof: summariseProof(
+              allEntries().map(e => ({ chain: e.key.split(',').map(Number), days: e.seconds / 86400 })),
+              bestChain.value
+            ),
+          }
+        : {}),
       // Read straight off the loaded backup. Null when there is no backup to read, never guessed:
       // "all maxed" asserted for an account nobody looked at would be worse than saying nothing.
       epicResearch: summariseEpicResearch(
@@ -852,6 +934,40 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     const raw = getSimulationContext().rawBackup ?? null;
     const equipped = raw ? getArtifactLoadoutFromBackup(raw) : null;
     return buildChainsCsv(entries, {
+      planStart: planStart.value,
+      timezone: useAutoPlannerStore().timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+      currentTE: currentTE.value,
+      final: finalTE.value,
+      effort: effort.value,
+      forceContinue: forceContinue.value,
+      availability: availability.value,
+      seedChain: seedChain.value,
+      // The ELR set is deliberately NOT listed. `getOptimalELRSet` re-solves the structure per leg
+      // against that leg's research state (up to 495 combos, and the reason it is the hotspot in
+      // leg.ts), so there is no single "ELR set for the run" to report — and running the search
+      // here just to print one would block the main thread for seconds on a button click.
+      inventory: raw ? describeVirtueInventory(raw) : undefined,
+      loadouts: [
+        { label: 'equipped in the backup', loadout: equipped },
+        { label: 'best earnings set available', loadout: raw ? getOptimalEarningsSet(raw) : null },
+      ],
+    });
+  }
+  /**
+   * The same CSV, yielded a chunk at a time, for the download path.
+   *
+   * The meta block is assembled identically -- it is the same run being described -- so this is
+   * deliberately a thin sibling of `exportCsv` rather than a second source of truth for what the
+   * file says. Only the delivery differs: see `chainsCsvChunks` for why the download must not go
+   * through one giant string.
+   */
+  function* exportCsvChunks(): Generator<string> {
+    const own = allEntries();
+    const entries = own.length ? own : resumable.value ? restoreEntries(resumable.value) : [];
+    // Read off the backup here, on the main thread: `getSimulationContext()` is Pinia-bound.
+    const raw = getSimulationContext().rawBackup ?? null;
+    const equipped = raw ? getArtifactLoadoutFromBackup(raw) : null;
+    yield* chainsCsvChunks(entries, {
       planStart: planStart.value,
       timezone: useAutoPlannerStore().timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
       currentTE: currentTE.value,
@@ -1075,6 +1191,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       refreshShortlist(true);
     }
 
+    holdRunLock();
+    document.addEventListener('visibilitychange', onVisibilityChange);
     try {
       pool = await createChainSearchPool(collectInputs(), {
         onSuspend: gap => {
@@ -1128,7 +1246,64 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       pool?.terminate();
       pool = null;
       isRunning.value = false;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      dropRunLock();
     }
+  }
+
+  /**
+   * Keep the browser from freezing this tab while a run is in flight.
+   *
+   * Chromium's freezing policy has an explicit opt-out list, and one entry on it is a page "holding
+   * a Web Lock or an IndexedDB transaction". So a lock held for the life of the run is not a
+   * workaround -- it is the documented way to say "this tab is doing something". Without it, a
+   * backgrounded tab that has been hidden and silent for five minutes is a candidate for freezing,
+   * which is why a run left overnight can be found stopped in the morning with nothing in the log.
+   *
+   * WHAT THIS DOES NOT DO, and there is no API that does: it cannot prevent DISCARDING. Memory
+   * Saver kills a background tab outright under memory pressure, there is no event before it, and
+   * the page only learns about it afterwards via `document.wasDiscarded` on the reload. The
+   * defences against that are the checkpoint and the memory budget, not this.
+   *
+   * Best-effort throughout. `navigator.locks` is absent in older browsers and the request can be
+   * refused; a run that cannot take a lock still runs.
+   */
+  let releaseRunLock: (() => void) | null = null;
+
+  function holdRunLock(): void {
+    if (releaseRunLock) return;
+    const locks = (navigator as Navigator & { locks?: LockManager }).locks;
+    if (!locks) return;
+    try {
+      // Resolved with a promise the lock is held until: `request` keeps the lock for as long as the
+      // callback's promise is pending, so the release function is the resolver.
+      void locks.request(
+        'ascension-planner:chain-search',
+        () =>
+          new Promise<void>(resolve => {
+            releaseRunLock = resolve;
+          })
+      );
+    } catch {
+      /* A run without a lock is a run that might get frozen, not a run that cannot start. */
+    }
+  }
+
+  function dropRunLock(): void {
+    releaseRunLock?.();
+    releaseRunLock = null;
+  }
+
+  /**
+   * Checkpoint when the tab is hidden, not only on the timer.
+   *
+   * `visibilitychange` is the last event a page is guaranteed to get: `beforeunload` and `unload`
+   * do not fire when a tab is discarded, so anything that waits for them loses the run. Going
+   * hidden is also the moment the tab becomes eligible for everything that can kill it, which makes
+   * it the one point where a save is worth paying for off-schedule.
+   */
+  function onVisibilityChange(): void {
+    if (document.visibilityState === 'hidden' && isRunning.value) void persist(liveCache, true);
   }
 
   async function start(playerId: string, options: { resume?: boolean } = {}): Promise<void> {
@@ -1196,6 +1371,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       console.warn('chain search: could not prepare storage', e);
     }
 
+    holdRunLock();
+    document.addEventListener('visibilitychange', onVisibilityChange);
     try {
       pool = await createChainSearchPool(collectInputs(), {
         onSuspend: gap => {
@@ -1322,6 +1499,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       stopRequested.value = false;
       batchDone.value = 0;
       batchTotal.value = 0;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      dropRunLock();
       await checkResumable(playerId);
     }
   }
@@ -1474,7 +1653,11 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     discardCheckpoint,
     runStartedAt,
     searchSpace,
+    legDetailBudget,
+    legsHeld,
+    legDetailBytes,
     exportCsv,
+    exportCsvChunks,
     buildRunSubmission,
     sendSubmission,
     submitUrl,

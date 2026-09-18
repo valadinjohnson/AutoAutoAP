@@ -474,3 +474,155 @@ describe('schema compatibility', () => {
     expect((await res.json()).problems.join(' ')).toContain('accepts 2, 3');
   });
 });
+
+describe('what an exhaustive run found', () => {
+  const PROOF = {
+    runnersUp: [
+      { chain: [249, 490], days: 948.44 },
+      { chain: [260, 490], days: 961.2 },
+    ],
+    byAscensions: [
+      { ascensions: 2, chain: [299, 490], days: 948.4, priced: 2 },
+      { ascensions: 3, chain: [249, 330, 490], days: 900.1, priced: 40 },
+    ],
+    spread: { best: 948.4, median: 955, worst: 1200.5 },
+  };
+
+  it('stores the block as sent', async () => {
+    await post('/submit', { ...MINIMAL, schema: 5, proof: PROOF });
+    expect(stored()[0][1].proof).toEqual(PROOF);
+  });
+
+  it('is absent on a submission that carries none, rather than stored empty', async () => {
+    await post('/submit', { ...MINIMAL, schema: 5 });
+    expect('proof' in stored()[0][1]).toBe(false);
+  });
+
+  // Same reasoning as every other optional block here: a submission is still worth keeping
+  // without its distribution, so a malformed one is dropped and not made into a rejection.
+  it('drops a block with no usable spread instead of refusing the submission', async () => {
+    const res = await post('/submit', { ...MINIMAL, schema: 5, proof: { ...PROOF, spread: null } });
+    expect(res.status).toBe(200);
+    expect('proof' in stored()[0][1]).toBe(false);
+  });
+
+  it('caps the runners-up, so a summary field cannot carry a whole result table', async () => {
+    const many = Array.from({ length: 500 }, (_, k) => ({ chain: [200 + k, 490], days: 900 + k }));
+    await post('/submit', { ...MINIMAL, schema: 5, proof: { ...PROOF, runnersUp: many } });
+    expect(stored()[0][1].proof.runnersUp).toHaveLength(16);
+  });
+
+  it('drops a listed chain that is longer than a chain is allowed to be', async () => {
+    const long = { chain: Array.from({ length: 200 }, (_, k) => k + 1), days: 900 };
+    await post('/submit', { ...MINIMAL, schema: 5, proof: { ...PROOF, runnersUp: [long] } });
+    expect(stored()[0][1].proof.runnersUp).toEqual([]);
+  });
+
+  // The same reason DURATION_DAYS is capped on the submission itself: these numbers are read as
+  // days and rendered next to real ones, and an unbounded value would make the rest unreadable.
+  it('drops a runner-up whose duration is out of range', async () => {
+    await post('/submit', {
+      ...MINIMAL,
+      schema: 5,
+      proof: { ...PROOF, runnersUp: [{ chain: [249, 490], days: 1e24 }] },
+    });
+    expect(stored()[0][1].proof.runnersUp).toEqual([]);
+  });
+
+  it('keeps an unknown field out of the block, like everywhere else', async () => {
+    await post('/submit', {
+      ...MINIMAL,
+      schema: 5,
+      proof: { ...PROOF, evilPayload: 'x'.repeat(5000) },
+    });
+    expect('evilPayload' in stored()[0][1].proof).toBe(false);
+  });
+});
+
+describe('the board keeps experiments apart', () => {
+  const NAMED = { ...MINIMAL, schema: 5, nickname: 'Wolfcry1993' };
+  const SPACE = {
+    mode: 'bands',
+    bands: [[249, 299]],
+    minGap: 0,
+    minAscensions: 2,
+    maxAscensions: 2,
+    chains: 2,
+    chainsPriced: 2,
+    stoppedEarly: false,
+  };
+  const board = async () => (await (await get('/leaderboard?final=490')).json()).rows;
+
+  // Already true before the space entered the key, and worth a test because it is the thing
+  // people assume is broken: the chain itself has always been part of the identity.
+  it('keeps two different chains from the same person', async () => {
+    await post('/submit', { ...NAMED, chain: [299, 490], durationDays: 900 });
+    await post('/submit', { ...NAMED, chain: [249, 330, 490], durationDays: 950 });
+    await post('/submit', { ...NAMED, chain: [210, 260, 310, 360, 490], durationDays: 980 });
+    expect((await board()).map(r => r.chain.length)).toEqual([2, 3, 5]);
+  });
+
+  // The case the space signature exists for. A wider space that reaches the same answer rules out
+  // more and is the more valuable row; without the signature it collapsed into the narrower one.
+  it('keeps one chain proven twice over different spaces', async () => {
+    await post('/submit', { ...NAMED, durationDays: 900, space: SPACE });
+    await post('/submit', {
+      ...NAMED,
+      durationDays: 900,
+      space: { ...SPACE, bands: [[200, 249, 299, 350]], chains: 4, chainsPriced: 4 },
+    });
+    expect(await board()).toHaveLength(2);
+  });
+
+  it('still collapses the same space run twice, which is one experiment priced again', async () => {
+    await post('/submit', { ...NAMED, durationDays: 900, space: SPACE });
+    await post('/submit', { ...NAMED, durationDays: 901, space: SPACE });
+    const rows = await board();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].durationDays).toBe(900);
+  });
+
+  // A run stopped halfway and the same run later finished are the same experiment. The completed
+  // one takes the slot on its own merits: over one space it cannot be slower than the partial.
+  it('treats a stopped run and a finished run over one space as the same experiment', async () => {
+    await post('/submit', { ...NAMED, durationDays: 950, space: { ...SPACE, chainsPriced: 1, stoppedEarly: true } });
+    await post('/submit', { ...NAMED, durationDays: 900, space: SPACE });
+    const rows = await board();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].space.stoppedEarly).toBe(false);
+  });
+
+  it('keeps a proof apart from a searched row that happens to agree', async () => {
+    await post('/submit', { ...NAMED, durationDays: 900 });
+    await post('/submit', { ...NAMED, durationDays: 900, space: SPACE });
+    expect(await board()).toHaveLength(2);
+  });
+
+  it('leaves rows with no space collapsing exactly as they did before', async () => {
+    await post('/submit', { ...NAMED, schema: 3, durationDays: 900 });
+    await post('/submit', { ...NAMED, schema: 3, durationDays: 901 });
+    expect(await board()).toHaveLength(1);
+  });
+});
+
+describe('the seed a run started from', () => {
+  it('stores it', async () => {
+    await post('/submit', { ...MINIMAL, schema: 5, seed: [195, 490] });
+    expect(stored()[0][1].seed).toEqual([195, 490]);
+  });
+
+  it('is absent when none was sent, which is how an exhaustive row reads as seedless', async () => {
+    await post('/submit', { ...MINIMAL, schema: 5 });
+    expect('seed' in stored()[0][1]).toBe(false);
+  });
+
+  it('bounds it like any other chain', async () => {
+    await post('/submit', { ...MINIMAL, schema: 5, seed: Array.from({ length: 200 }, (_, k) => k + 1) });
+    expect(stored()[0][1].seed).toHaveLength(64);
+  });
+
+  it('drops values that are not usable TEs rather than storing them', async () => {
+    await post('/submit', { ...MINIMAL, schema: 5, seed: [195, -1, 'x', 1e9, 490] });
+    expect(stored()[0][1].seed).toEqual([195, 490]);
+  });
+});

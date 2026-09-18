@@ -36,8 +36,11 @@ import type { LegSummary } from './types';
  *  2: `artifacts` became a list of labels, best-per-family, instead of `{label, count}` for every
  *     tier owned. The Worker must be redeployed with the matching SCHEMA at the same time -- it
  *     refuses a schema it does not know, so an app shipped ahead of the collector submits
- *     nothing. */
-export const SUBMISSION_SCHEMA = 4;
+ *     nothing.
+ *  5: `proof`, the outcome side of an exhaustive run -- runners-up, the best at each ascension
+ *     count, and the spread. Additive and Insane-only, like `space` in 4. Plus `seed`, the chain
+ *     the run started from, which applies to a staged run and not to an exhaustive one. */
+export const SUBMISSION_SCHEMA = 5;
 
 /**
  * The artifact families a virtue ascension can actually equip.
@@ -257,7 +260,68 @@ export interface Submission {
    */
   space?: SearchSpace;
 
+  /**
+   * What the exhaustive run FOUND, as opposed to what it looked at. Schema 5, Insane mode only.
+   *
+   * `space` makes the winner checkable in principle; this makes it readable in practice. A proven
+   * optimum on its own is a single number, and a single number cannot answer the questions a
+   * reader actually has -- is this a knife-edge or a plateau, what did it beat, does one more
+   * ascension help or hurt. The run already knows all of it: every chain in the space was priced,
+   * so the distribution is sitting in memory and is thrown away at submit time unless it is
+   * summarised here.
+   *
+   * Summarised, not dumped. The full table is the CSV, which is an opt-in megabyte; this is a few
+   * hundred bytes that make the row worth reading without downloading anything.
+   */
+  proof?: ExhaustiveProof;
+
+  /**
+   * The chain the search STARTED from, when it started from one.
+   *
+   * A staged run descends from a seed, so its answer is partly a fact about where it was pointed:
+   * a result that moved a long way from its seed is evidence the search did real work, and one
+   * that barely moved may just be a seed that was already good -- or a search that never escaped
+   * it. Without this the board shows the destination and nothing about the journey.
+   *
+   * Absent on an exhaustive run, which has no seed to report: it enumerates a space rather than
+   * improving on a guess, and printing the typed chain there would invent a starting point the
+   * search never used.
+   */
+  seed?: number[];
+
   submittedAt: string;
+}
+
+/** A chain and what it cost, as the proof block records it. */
+export interface ProofChain {
+  chain: number[];
+  days: number;
+}
+
+/** The outcome side of an exhaustive run. Every field is derived from chains that were actually
+ *  priced, so a run stopped early describes what it reached and claims nothing more. */
+export interface ExhaustiveProof {
+  /**
+   * The next best chains after the winner, best first.
+   *
+   * The single most useful thing here. "948.41 days is optimal" and "948.41 days is optimal, and
+   * the second best is 948.44" are very different claims: the first reads as a discovery, the
+   * second says the whole neighbourhood is flat and the exact winner barely matters. Someone
+   * copying a chain off the board should know which one they are looking at.
+   */
+  runnersUp: ProofChain[];
+  /**
+   * The best chain at each ascension count the space allowed, when it allowed more than one.
+   *
+   * This is the comparison the board exists to make, and it is the one an exhaustive run can make
+   * properly: every 6-ascension chain and every 7-ascension chain in the space were both priced,
+   * so "7 beats 6 by 40 days here" is measured rather than inferred from two people's runs on two
+   * different accounts.
+   */
+  byAscensions: (ProofChain & { ascensions: number; priced: number })[];
+  /** Duration spread over everything priced, in days. Says how much the choice of chain is worth
+   *  at all -- a 5-day spread and a 500-day spread are different games. */
+  spread: { best: number; median: number; worst: number };
 }
 
 /** The box an exhaustive run proved its answer over. */
@@ -362,6 +426,10 @@ export interface SubmissionInputs {
   /** Omitted when the run's cost is not known, e.g. a result replayed from a checkpoint. */
   /** Only set by Insane mode; a staged run has no stated space to prove anything over. */
   space?: SearchSpace;
+  /** The outcome side of the same run. Null when there was nothing to summarise. */
+  proof?: ExhaustiveProof | null;
+  /** The seed the search descended from. Omitted by Insane mode, which descends from nothing. */
+  seed?: number[] | null;
   run?: RunCost;
   /** Omitted when the backup could not be read; never guessed. */
   epicResearch?: EpicResearchSummary | null;
@@ -383,6 +451,73 @@ function roundRunCost(r: RunCost): RunCost {
     ...(r.longestStallMinutes !== undefined && Number.isFinite(r.longestStallMinutes)
       ? { longestStallMinutes: Number(r.longestStallMinutes.toFixed(1)) }
       : {}),
+  };
+}
+
+/** How many runners-up to carry. Enough to see whether the top is flat, short enough that the
+ *  block stays a summary. */
+export const PROOF_RUNNERS_UP = 8;
+
+/**
+ * Summarise the outcome of an exhaustive run.
+ *
+ * Takes every chain that was priced, not the shortlist: the shortlist is a VIEW, filtered and
+ * sorted for a table the player is reading, and the median of a filtered set is the median of
+ * nothing. Duplicates are collapsed by chain because the coarse cache and the driver cache can
+ * both hold the same chain -- see `allEntries` -- and a duplicated winner would otherwise show up
+ * as its own runner-up with a margin of zero.
+ *
+ * Returns null when there is nothing to describe. A run with one priced chain has no runners-up,
+ * no spread worth the name, and no comparison to make; an empty block claiming otherwise is worse
+ * than an absent one.
+ */
+export function summariseProof(priced: ProofChain[], winner: number[]): ExhaustiveProof | null {
+  const byKey = new Map<string, ProofChain>();
+  for (const c of priced) {
+    if (!Number.isFinite(c.days) || c.days <= 0 || !c.chain.length) continue;
+    const key = c.chain.join(',');
+    const prev = byKey.get(key);
+    if (!prev || c.days < prev.days) byKey.set(key, c);
+  }
+  const all = [...byKey.values()].sort((a, b) => a.days - b.days);
+  if (all.length < 2) return null;
+
+  const round = (c: ProofChain): ProofChain => ({ chain: [...c.chain], days: Number(c.days.toFixed(4)) });
+  const winnerKey = winner.join(',');
+
+  // Skipped by KEY rather than by position. The submitted winner comes from the run's own
+  // `noteBest` and is normally `all[0]`, but a run resumed from a checkpoint can carry a winner the
+  // current cache does not hold -- dropping `all[0]` blindly would then delete a real chain from
+  // the list and quietly promote the second best into the top slot.
+  const runnersUp = all
+    .filter(c => c.chain.join(',') !== winnerKey)
+    .slice(0, PROOF_RUNNERS_UP)
+    .map(round);
+
+  const groups = new Map<number, { best: ProofChain; priced: number }>();
+  for (const c of all) {
+    const n = c.chain.length;
+    const g = groups.get(n);
+    if (!g) groups.set(n, { best: c, priced: 1 });
+    else {
+      g.priced++;
+      if (c.days < g.best.days) g.best = c;
+    }
+  }
+  const byAscensions = [...groups.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([ascensions, g]) => ({ ascensions, priced: g.priced, ...round(g.best) }));
+
+  return {
+    runnersUp,
+    // Only when there is a comparison to make. One ascension count means this repeats the winner
+    // and the spread in a third place, which is noise dressed as data.
+    byAscensions: byAscensions.length > 1 ? byAscensions : [],
+    spread: {
+      best: Number(all[0].days.toFixed(4)),
+      median: Number(all[Math.floor(all.length / 2)].days.toFixed(4)),
+      worst: Number(all[all.length - 1].days.toFixed(4)),
+    },
   };
 }
 
@@ -429,6 +564,8 @@ export function buildSubmission(i: SubmissionInputs): Submission {
     // to nothing anyway, but the collector distinguishes "absent" from "present and empty".
     ...(i.run ? { run: roundRunCost(i.run) } : {}),
     ...(i.space ? { space: i.space } : {}),
+    ...(i.proof ? { proof: i.proof } : {}),
+    ...(i.seed?.length ? { seed: [...i.seed] } : {}),
     ...(i.epicResearch ? { epicResearch: i.epicResearch } : {}),
     ...(i.colleggtibles ? { colleggtibles: i.colleggtibles } : {}),
     submittedAt: new Date(i.now ?? Date.now()).toISOString(),

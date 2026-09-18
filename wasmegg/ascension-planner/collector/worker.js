@@ -30,7 +30,7 @@
 // 2: `artifacts` became a list of labels (best piece per family) instead of `{label, count}` for
 // every tier owned; see src/search/submission.ts. Rows already in KV at schema 1 keep their old
 // shape and the page renders both -- a stored row is history, not something to migrate.
-const SCHEMA = 4;
+const SCHEMA = 5;
 
 /**
  * Schemas this Worker will accept, newest last.
@@ -40,12 +40,13 @@ const SCHEMA = 4;
  * exactly what happened when 3 shipped in the app first: "collector said 400: unknown schema 3",
  * with the sender given nothing to do about it.
  *
- * 3 is purely additive over 2 (run cost, epic research, colleggtibles, all optional), so a
+ * 3 is purely additive over 2 (run cost, epic research, colleggtibles, all optional), 4 adds
+ * `space` and 5 adds `proof`, both Insane-only and both optional, so a
  * schema-2 row is a valid row that happens to carry none of them, and storing it is strictly better
  * than rejecting the run that produced it. The `schema` field is stored as sent, so a reader can
  * still tell which rows can have timing data and which cannot.
  */
-const ACCEPTED_SCHEMAS = new Set([2, 3, 4]);
+const ACCEPTED_SCHEMAS = new Set([2, 3, 4, 5]);
 
 /**
  * Bounds on everything countable.
@@ -74,6 +75,11 @@ const MAX = {
   BAND_CHECKPOINTS: 32,
   /** Values inside one band. A step-1 band over the whole TE range is a few hundred. */
   BAND_VALUES: 1024,
+  /** Runners-up carried in a proof block. The app sends 8; this is the receiver refusing a
+   *  client that decided to send its whole result table through a summary field. */
+  RUNNERS_UP: 16,
+  /** One entry per ascension count, bounded by the same ceiling as the ascension range itself. */
+  PROOF_GROUPS: 64,
   /** Timezone, effort, window, the two local stamps. */
   TEXT: 64,
   NICKNAME: 40,
@@ -90,6 +96,23 @@ const MAX = {
   /** Per address, per minute. Enough to post every result of a sitting; far short of a script. */
   SUBMITS_PER_MINUTE: 10,
 };
+
+/**
+ * A stable signature for the space an exhaustive run covered, for the dedupe key below.
+ *
+ * Empty string for every searched row, which is what keeps this change invisible to schema 2-4:
+ * they all share one signature and collapse exactly as they did before. It also means an
+ * exhaustive row and a searched row that happen to agree on a chain are kept apart, which is
+ * correct -- a proof and a heuristic hit are not the same submission even when the answer matches.
+ */
+function spaceKey(sp) {
+  if (!sp || typeof sp !== 'object') return '';
+  const where =
+    sp.mode === 'range' && sp.range
+      ? `r${sp.range.lo}-${sp.range.hi}/${sp.range.step}`
+      : `b${(sp.bands || []).map(b => (b || []).join('.')).join('_')}`;
+  return `${where}|g${sp.minGap}|a${sp.minAscensions}-${sp.maxAscensions}|n${sp.chains}`;
+}
 
 /** Same rules as src/search/submission.ts. Returns the problems; empty means acceptable. */
 function validateSubmission(s) {
@@ -203,9 +226,7 @@ function runCost(r) {
     secondsPerChain: perChain,
     // Run health. Optional, and clamped to the same month-long ceiling as `minutes`: a submission
     // claiming a freeze longer than the run itself is telling us nothing we can use.
-    ...(suspended !== undefined && suspended >= 0 && suspended <= 60 * 24 * 30
-      ? { suspendedMinutes: suspended }
-      : {}),
+    ...(suspended !== undefined && suspended >= 0 && suspended <= 60 * 24 * 30 ? { suspendedMinutes: suspended } : {}),
     ...(stall !== undefined && stall >= 0 && stall <= 60 * 24 * 30 ? { longestStallMinutes: stall } : {}),
   };
 }
@@ -259,6 +280,56 @@ function searchSpace(sp) {
     );
   }
   return out;
+}
+
+/**
+ * The outcome of an exhaustive run. Schema 5, Insane mode only.
+ *
+ * Rebuilt field by field like everything else here, and bounded on the two axes that a hostile or
+ * broken client could otherwise use to grow a row without limit: how many chains are listed, and
+ * how long each one is. A chain inside this block is subject to the same `MAX.CHAIN` ceiling as
+ * the submission's own chain, because it is the same kind of thing and there is no reason for one
+ * to be longer than the other.
+ *
+ * Dropped rather than rejected when it does not parse, like every other optional block: the
+ * headline result is still worth keeping without its distribution.
+ */
+function proofChain(c) {
+  if (!c || typeof c !== 'object') return undefined;
+  const days = num(c.days);
+  if (days === undefined || days <= 0 || days > MAX.DURATION_DAYS) return undefined;
+  if (!Array.isArray(c.chain) || !c.chain.length || c.chain.length > MAX.CHAIN) return undefined;
+  const chain = c.chain.map(v => num(v)).filter(v => v !== undefined && v > 0 && v <= MAX.TE);
+  if (chain.length !== c.chain.length) return undefined;
+  return { chain, days };
+}
+
+function proof(p) {
+  if (!p || typeof p !== 'object') return undefined;
+  const sp = p.spread;
+  if (!sp || typeof sp !== 'object') return undefined;
+  const best = num(sp.best);
+  const median = num(sp.median);
+  const worst = num(sp.worst);
+  if ([best, median, worst].some(v => v === undefined || v <= 0 || v > MAX.DURATION_DAYS)) return undefined;
+
+  const runnersUp = Array.isArray(p.runnersUp)
+    ? p.runnersUp.slice(0, MAX.RUNNERS_UP).map(proofChain).filter(Boolean)
+    : [];
+  const byAscensions = Array.isArray(p.byAscensions)
+    ? p.byAscensions
+        .slice(0, MAX.PROOF_GROUPS)
+        .map(g => {
+          const c = proofChain(g);
+          const n = num(g?.ascensions);
+          const priced = num(g?.priced);
+          if (!c || n === undefined || n < 1 || n > MAX.CHAIN) return undefined;
+          return { ascensions: n, priced: priced !== undefined && priced >= 0 ? priced : 0, ...c };
+        })
+        .filter(Boolean)
+    : [];
+
+  return { runnersUp, byAscensions, spread: { best, median, worst } };
 }
 
 /** Epic research summary, re-bounded. */
@@ -339,6 +410,7 @@ function pickSubmission(s) {
     epicResearch: epicResearch(s.epicResearch),
     colleggtibles: colleggtibles(s.colleggtibles),
     space: searchSpace(s.space),
+    proof: proof(s.proof),
 
     legs: Array.isArray(s.legs)
       ? s.legs.slice(0, MAX.LEGS).map(l =>
@@ -349,6 +421,14 @@ function pickSubmission(s) {
             peakDeliveryQph: num(l?.peakDeliveryQph),
           })
         )
+      : undefined,
+    // Same bounds as `chain`: it is the same kind of thing, and there is no reason for the chain a
+    // run started from to be longer than the one it ended on.
+    seed: Array.isArray(s.seed)
+      ? s.seed
+          .slice(0, MAX.CHAIN)
+          .map(v => num(v))
+          .filter(v => v !== undefined && v > 0 && v <= MAX.TE)
       : undefined,
     chainsPriced: num(s.chainsPriced),
     submittedAt: text(s.submittedAt, MAX.TEXT),
@@ -551,6 +631,16 @@ export default {
       // ANONYMOUS IS NEVER COLLAPSED, because it is not an identity. Two anonymous submitters
       // who happen to have tried the same chain at the same effort are two people, and deduping
       // them would delete one player's result on the strength of a name they declined to give.
+      //
+      // THE SEARCHED SPACE IS PART OF THE KEY, which is the one place an exhaustive run needed
+      // more than the fields above. Two Insane runs over different spaces can land on the same
+      // chain -- a wider space that reaches the same answer is the common case, and it is the
+      // more valuable of the two because it rules out more -- and every other field in this key
+      // would be identical, so the wider proof collapsed into the narrower one and the row that
+      // survived was whichever happened to be posted first. `chainsPriced` and `stoppedEarly` are
+      // deliberately NOT in the signature: a run stopped halfway and the same run later finished
+      // are the same experiment, and the completed one wins the slot on its own merits because it
+      // cannot be slower than the partial attempt it supersedes.
       const seen = new Set();
       const best = [];
       for (const r of rows) {
@@ -563,6 +653,7 @@ export default {
             r.effort || '',
             r.window || '',
             r.holdShifts ? 'hold' : 'free',
+            spaceKey(r.space),
           ].join('|');
           if (seen.has(key)) continue;
           seen.add(key);
@@ -645,13 +736,27 @@ const LEADERBOARD_HTML = `<!doctype html>
   .legs { font-size:.75rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
   .legs div { padding:.1rem 0; }
   a.csv { display:inline-block; margin-top:.5rem; font-size:.75rem; font-weight:800; }
+  /* An exhaustive row is a different KIND of claim from a searched one -- a proven optimum of a
+     stated space rather than the best thing a heuristic happened to reach -- so it gets a mark
+     rather than a value in the effort column. Insane mode does not use the effort knob, and the
+     tier it sends is whatever the main panel was left on; printing "balanced" next to a proof
+     is worse than printing nothing. */
+  .exh { display:inline-block; padding:.05rem .4rem; border-radius:.35rem; font-size:.6rem;
+         font-weight:900; letter-spacing:.08em; text-transform:uppercase;
+         background:#4f46e5; color:#fff; }
+  .exh.partial { background:#b45309; }
+  .bands { font-size:.72rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+           max-height:9rem; overflow:auto; }
+  .bands div { padding:.05rem 0; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Ascension chain leaderboard</h1>
   <p class="sub">Fastest chains submitted by players, one entry per person. Click a row for the
-    artifacts, stones and per-leg detail it was simulated with.</p>
+    artifacts, stones and per-leg detail it was simulated with. Rows marked
+    <span class="exh">exhaustive</span> were proven optimal over a stated space rather than found
+    by a search &mdash; open one to see exactly what was enumerated.</p>
 
   <div class="controls">
     <div>
@@ -668,9 +773,9 @@ const LEADERBOARD_HTML = `<!doctype html>
     <thead><tr>
       <th></th><th>#</th><th>Who</th><th>Chain</th><th class="num">Ascensions</th>
       <th class="num">Days</th><th>Finishes</th><th class="num">Waiting</th>
-      <th>Window</th><th>Effort</th>
+      <th>Window</th><th>Effort</th><th>Submitted</th>
     </tr></thead>
-    <tbody id="rows"><tr><td colspan="10" class="empty">Loading…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="11" class="empty">Loading…</td></tr></tbody>
   </table></div>
 
   <details class="upload">
@@ -704,12 +809,12 @@ async function load() {
   const q = new URLSearchParams();
   if (finalEl.value) q.set('final', finalEl.value);
   q.set('limit', limitEl.value || '50');
-  rowsEl.innerHTML = '<tr><td colspan="10" class="empty">Loading…</td></tr>';
+  rowsEl.innerHTML = '<tr><td colspan="11" class="empty">Loading…</td></tr>';
   try {
     const res = await fetch('/leaderboard?' + q);
     const data = await res.json();
     if (!data.rows || !data.rows.length) {
-      rowsEl.innerHTML = '<tr><td colspan="10" class="empty">Nothing submitted yet.</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="11" class="empty">Nothing submitted yet.</td></tr>';
       return;
     }
     // Two rows per entry: the summary, and a detail row that starts hidden. Same shape as the
@@ -725,10 +830,11 @@ async function load() {
         <td class="muted">\${esc(r.endLocal || '')}</td>
         <td class="num">\${r.waitingHours == null ? '<span class="muted">—</span>' : Number(r.waitingHours).toFixed(1) + ' h'}</td>
         <td class="muted">\${esc(r.window || 'no schedule')}</td>
-        <td class="muted">\${esc(r.effort || '')}</td>
+        <td class="muted">\${effortCell(r)}</td>
+        <td class="muted">\${esc((r.submittedAt || '').slice(0, 10))}</td>
       </tr>
       <tr class="detail" data-detail="\${i}" hidden>
-        <td class="detail" colspan="10">\${detail(r)}</td>
+        <td class="detail" colspan="11">\${detail(r)}</td>
       </tr>\`).join('');
     // Populate the target filter from what has actually been submitted.
     if (finalEl.options.length === 1) {
@@ -737,7 +843,7 @@ async function load() {
       }
     }
   } catch (e) {
-    rowsEl.innerHTML = '<tr><td colspan="10" class="empty">Could not load: ' + esc(e.message) + '</td></tr>';
+    rowsEl.innerHTML = '<tr><td colspan="11" class="empty">Could not load: ' + esc(e.message) + '</td></tr>';
   }
 }
 // What the row was simulated with. Counts are capped by the app before sending, so a number at
@@ -772,6 +878,87 @@ function sets(slots, fallback) {
       </div>\`).join('');
 }
 
+// What goes in the Effort column.
+//
+// Two different things share it because they answer the same question -- how hard did this row
+// look -- and a proof is the strongest possible answer to it. \`space\` is only ever present on a
+// schema-4 Insane submission, so an older row is unaffected and still prints its tier.
+function effortCell(r) {
+  if (!r.space) return esc(r.effort || '');
+  return r.space.stoppedEarly
+    ? '<span class="exh partial">partial</span>'
+    : '<span class="exh">exhaustive</span>';
+}
+
+// The space an exhaustive run proved its answer over.
+//
+// Rendered in full rather than summarised, because the whole value of an exhaustive row is that
+// the reader can check the claim: "fastest 2-ascension chain to 490 with a first checkpoint in
+// {249, 299}" is a statement you can agree or disagree with, where "fastest chain found" is not.
+//
+// \`stoppedEarly\` is called out loudly. A run that was cut short enumerated a space it did not
+// finish, so its answer is the best of what it reached -- exactly an ordinary search result --
+// and letting that render as a proof would be the one way this block could mislead.
+function provenance(sp) {
+  if (!sp) return '';
+  const asc = sp.minAscensions === sp.maxAscensions
+    ? String(sp.minAscensions)
+    : sp.minAscensions + '-' + sp.maxAscensions;
+  const where = sp.mode === 'range' && sp.range
+    ? 'every ' + esc(sp.range.step) + ' TE from ' + esc(sp.range.lo) + ' to ' + esc(sp.range.hi)
+    : 'listed bands';
+  const bands = sp.mode === 'bands' && sp.bands && sp.bands.length
+    ? '<div class="bands">' + sp.bands.map((b, k) =>
+        '<div>C' + (k + 1) + ': ' + esc((b || []).join(' ')) + '</div>').join('') + '</div>'
+    : '';
+  const warn = sp.stoppedEarly
+    ? '<div class="muted" style="margin-top:.4rem;color:#b45309;font-weight:700">' +
+      'Stopped before the space was finished — this is the best of what it reached, not a proof.' +
+      '</div>'
+    : '';
+  return \`<div><h3>Proven over</h3><div class="kv">
+      <div><span>Checkpoints from</span><span>\${where}</span></div>
+      <div><span>Ascensions</span><span>\${esc(asc)}</span></div>
+      <div><span>Minimum gap</span><span>\${esc(sp.minGap)} TE</span></div>
+      <div><span>Chains in space</span><span>\${Number(sp.chains).toLocaleString()}</span></div>
+      <div><span>Chains priced</span><span>\${Number(sp.chainsPriced).toLocaleString()}</span></div>
+    </div>\${bands}\${warn}</div>\`;
+}
+
+// What the exhaustive run found, next to what it looked at.
+//
+// The margin is computed here rather than stored, because it is a subtraction and a stored copy
+// is a second thing that can disagree with the two numbers it came from. It is the figure most
+// worth putting first: a winner ahead by 0.03 days is a flat neighbourhood where the exact chain
+// hardly matters, and a winner ahead by forty is a real find, and the same "948.41" is printed
+// either way.
+function outcome(r) {
+  const p = r.proof;
+  if (!p) return '';
+  const best = Number(r.durationDays);
+  const next = p.runnersUp && p.runnersUp.length ? Number(p.runnersUp[0].days) : null;
+  const margin = next === null ? null : next - best;
+  const rows = (p.runnersUp || []).map((c, k) =>
+    '<div>' + (k + 2) + '. ' + esc((c.chain || []).join(' ')) + '  ' +
+    Number(c.days).toFixed(3) + ' d  <span class="muted">+' +
+    (Number(c.days) - best).toFixed(3) + '</span></div>').join('');
+  const groups = (p.byAscensions || []).map(g =>
+    '<div>' + esc(g.ascensions) + ' asc: ' + esc((g.chain || []).join(' ')) + '  ' +
+    Number(g.days).toFixed(3) + ' d  <span class="muted">(' +
+    Number(g.priced).toLocaleString() + ' priced)</span></div>').join('');
+  return \`<div><h3>What it found</h3><div class="kv">
+      <div><span>Margin over 2nd</span><span>\${
+        margin === null ? '&mdash;' : margin.toFixed(3) + ' d'
+      }</span></div>
+      <div><span>Best in space</span><span>\${Number(p.spread.best).toFixed(3)} d</span></div>
+      <div><span>Median</span><span>\${Number(p.spread.median).toFixed(3)} d</span></div>
+      <div><span>Worst</span><span>\${Number(p.spread.worst).toFixed(3)} d</span></div>
+    </div>
+    \${rows ? '<h3 style="margin-top:.6rem">Runners-up</h3><div class="legs">' + rows + '</div>' : ''}
+    \${groups ? '<h3 style="margin-top:.6rem">Best per ascension count</h3><div class="legs">' + groups + '</div>' : ''}
+  </div>\`;
+}
+
 function detail(r) {
   const legs = (r.legs || []).length
     ? r.legs.map((l, k) =>
@@ -786,6 +973,10 @@ function detail(r) {
         <div><span>Starting TE</span><span>\${esc(r.currentTE)}</span></div>
         <div><span>Target TE</span><span>\${esc(r.finalTE)}</span></div>
         <div><span>Plan starts</span><span>\${esc(r.startLocal || '—')}</span></div>
+        <div><span>Seed chain</span><span>\${
+          r.seed && r.seed.length ? esc(r.seed.join(' ')) : '<span class="muted">exhaustive — no seed</span>'
+        }</span></div>
+        <div><span>Submitted</span><span>\${esc((r.submittedAt || '').replace('T', ' ').slice(0, 16))} UTC</span></div>
         <div><span>Chains priced</span><span>\${esc(r.chainsPriced ?? '—')}</span></div>
         <div><span>Shifts held</span><span>\${r.holdShifts ? 'yes' : 'no'}</span></div>
       </div>\${csv}</div>
@@ -793,6 +984,8 @@ function detail(r) {
       <div><h3>Earnings set</h3>\${sets(r.earnings, null)}</div>
       <div><h3>Stones</h3><div class="kv">\${counts(r.stones)}</div></div>
       <div><h3>Legs</h3><div class="legs">\${legs}</div></div>
+      \${provenance(r.space)}
+      \${outcome(r)}
     </div>\`;
 }
 

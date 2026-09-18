@@ -17,8 +17,8 @@
         <div>
           <h3 class="text-[10px] font-black text-indigo-700 uppercase tracking-widest">Chain leaderboard</h3>
           <p class="text-[11px] text-indigo-900/80 leading-relaxed mt-1">
-            The fastest chain each person has submitted. Open a row for the artifacts, stones and
-            per-leg timings it was simulated with.
+            The fastest chain each person has submitted. Open a row for the artifacts, stones and per-leg timings it was
+            simulated with.
           </p>
         </div>
         <div class="flex items-end gap-2">
@@ -44,9 +44,7 @@
         </div>
       </div>
 
-      <p v-if="error" class="text-[11px] text-red-700 font-semibold">
-        Could not reach the collector: {{ error }}
-      </p>
+      <p v-if="error" class="text-[11px] text-red-700 font-semibold">Could not reach the collector: {{ error }}</p>
 
       <p v-else-if="!loading && !rows.length" class="text-[11px] text-indigo-900/60 py-6 text-center">
         Nothing submitted yet. Run a search and use <span class="font-semibold">Share this result</span>.
@@ -80,7 +78,7 @@
                     class="text-slate-400 hover:text-indigo-700"
                     :aria-expanded="open === (row.id ?? String(i))"
                     :aria-label="`Show what ${(row.chain || []).join(' ')} was simulated with`"
-                    @click="open = open === (row.id ?? String(i)) ? '' : row.id ?? String(i)"
+                    @click="open = open === (row.id ?? String(i)) ? '' : (row.id ?? String(i))"
                   >
                     {{ open === (row.id ?? String(i)) ? '⌄' : '›' }}
                   </button>
@@ -102,7 +100,23 @@
                   <span v-else class="font-bold text-amber-700">{{ row.waitingHours.toFixed(1) }} h</span>
                 </td>
                 <td class="py-2 pr-3 text-slate-400">{{ row.window || 'no schedule' }}</td>
-                <td class="py-2 pr-3 text-slate-400">{{ row.effort || '—' }}</td>
+                <!-- A proof is not an effort tier. Insane mode does not use the effort knob, so
+                     the tier it sends is whatever the main panel was left on; showing "balanced"
+                     next to an exhaustive result reads as a weaker claim than the row is making.
+                     `space` is present only on schema-4 Insane rows, so older rows are untouched. -->
+                <td class="py-2 pr-3 text-slate-400">
+                  <span
+                    v-if="row.space"
+                    class="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest text-white"
+                    :class="row.space.stoppedEarly ? 'bg-amber-600' : 'bg-indigo-600'"
+                  >
+                    {{ row.space.stoppedEarly ? 'partial' : 'exhaustive' }}
+                  </span>
+                  <span v-else>{{ row.effort || '—' }}</span>
+                </td>
+                <td class="py-2 pr-3 text-slate-400 whitespace-nowrap">
+                  {{ (row.submittedAt || '').slice(0, 10) || '—' }}
+                </td>
                 <td class="py-2 text-right">
                   <button
                     type="button"
@@ -114,16 +128,41 @@
                 </td>
               </tr>
               <tr v-if="open === (row.id ?? String(i))" class="bg-slate-50">
-                <td colspan="10" class="px-3 py-3">
+                <td colspan="11" class="px-3 py-3">
                   <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 text-[11px]">
                     <div>
                       <h4 class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Run</h4>
                       <div class="space-y-0.5 text-slate-600">
-                        <div class="flex justify-between gap-3"><span>Starting TE</span><span class="font-bold">{{ row.currentTE ?? '—' }}</span></div>
-                        <div class="flex justify-between gap-3"><span>Target TE</span><span class="font-bold">{{ row.finalTE }}</span></div>
-                        <div class="flex justify-between gap-3"><span>Plan starts</span><span class="font-bold">{{ row.startLocal || '—' }}</span></div>
-                        <div class="flex justify-between gap-3"><span>Chains priced</span><span class="font-bold">{{ row.chainsPriced ?? '—' }}</span></div>
-                        <div class="flex justify-between gap-3"><span>Shifts held</span><span class="font-bold">{{ row.holdShifts ? 'yes' : 'no' }}</span></div>
+                        <div class="flex justify-between gap-3">
+                          <span>Starting TE</span><span class="font-bold">{{ row.currentTE ?? '—' }}</span>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                          <span>Target TE</span><span class="font-bold">{{ row.finalTE }}</span>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                          <span>Plan starts</span><span class="font-bold">{{ row.startLocal || '—' }}</span>
+                        </div>
+                        <!-- A staged run descends from a seed, so how far it moved from one is part
+                             of reading the result. An exhaustive run has none: it enumerates rather
+                             than improves, and naming a seed would invent a starting point the
+                             search never used. -->
+                        <div class="flex justify-between gap-3">
+                          <span>Seed chain</span>
+                          <span v-if="row.seed?.length" class="font-mono font-bold">{{ row.seed.join(' ') }}</span>
+                          <span v-else class="text-slate-400">exhaustive — no seed</span>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                          <span>Submitted</span>
+                          <span class="font-bold">
+                            {{ (row.submittedAt || '').replace('T', ' ').slice(0, 16) || '—' }} UTC
+                          </span>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                          <span>Chains priced</span><span class="font-bold">{{ row.chainsPriced ?? '—' }}</span>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                          <span>Shifts held</span><span class="font-bold">{{ row.holdShifts ? 'yes' : 'no' }}</span>
+                        </div>
                       </div>
                       <a
                         v-if="row.hasCsv"
@@ -143,7 +182,7 @@
                       </h4>
                       <div class="flex gap-1 mb-1.5">
                         <button
-                          v-for="t in (['delivery', 'earnings'] as const)"
+                          v-for="t in ['delivery', 'earnings'] as const"
                           :key="t"
                           type="button"
                           class="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest"
@@ -158,7 +197,7 @@
                         </button>
                       </div>
                       <div
-                        v-for="(slot, k) in (setTab[row.id ?? ''] === 'earnings' ? row.earnings : row.delivery)"
+                        v-for="(slot, k) in setTab[row.id ?? ''] === 'earnings' ? row.earnings : row.delivery"
                         :key="k"
                         class="mb-1"
                       >
@@ -181,7 +220,8 @@
                       <h4 class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Stones</h4>
                       <div v-if="!row.stones?.length" class="text-slate-400">none recorded</div>
                       <div v-for="(st, k) in row.stones" :key="k" class="flex justify-between gap-3 text-slate-600">
-                        <span>{{ st.label }}</span><span class="font-bold">{{ st.count }}</span>
+                        <span>{{ st.label }}</span
+                        ><span class="font-bold">{{ st.count }}</span>
                       </div>
                     </div>
                     <div>
@@ -194,6 +234,93 @@
                         {{ l.peakDeliveryQph?.toFixed(2) }} q/hr
                       </div>
                     </div>
+                    <!-- Shown in full rather than summarised: the value of an exhaustive row is
+                         that a reader can check the claim, and "fastest 2-ascension chain to 490
+                         with a first checkpoint in {249, 299}" is a statement you can disagree
+                         with where "fastest chain found" is not. -->
+                    <div v-if="row.space">
+                      <h4 class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Proven over</h4>
+                      <div class="space-y-0.5 text-slate-600">
+                        <div class="flex justify-between gap-3">
+                          <span>Checkpoints from</span>
+                          <span class="font-bold text-right">{{ spaceWhere(row.space) }}</span>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                          <span>Ascensions</span><span class="font-bold">{{ spaceAsc(row.space) }}</span>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                          <span>Minimum gap</span><span class="font-bold">{{ row.space.minGap }} TE</span>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                          <span>Chains in space</span>
+                          <span class="font-bold">{{ row.space.chains.toLocaleString() }}</span>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                          <span>Chains priced</span>
+                          <span class="font-bold">{{ row.space.chainsPriced.toLocaleString() }}</span>
+                        </div>
+                      </div>
+                      <div v-if="row.space.bands?.length" class="mt-1 font-mono text-[10px] text-slate-600">
+                        <div v-for="(b, k) in row.space.bands" :key="k">C{{ k + 1 }}: {{ b.join(' ') }}</div>
+                      </div>
+                      <!-- A run cut short enumerated a space it did not finish, so its answer is
+                           the best of what it reached -- an ordinary search result. Letting that
+                           render as a proof is the one way this block could mislead. -->
+                      <p v-if="row.space.stoppedEarly" class="mt-1 font-semibold text-amber-700">
+                        Stopped before the space was finished — best of what it reached, not a proof.
+                      </p>
+                    </div>
+                    <!-- The distribution the proof sits in. The margin leads because it is what
+                         changes how the winning chain should be read: ahead by 0.03 days is a flat
+                         neighbourhood where the exact chain hardly matters, ahead by forty is a
+                         real find, and the headline number looks identical either way. -->
+                    <div v-if="row.proof">
+                      <h4 class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1.5">
+                        What it found
+                      </h4>
+                      <div class="space-y-0.5 text-slate-600">
+                        <div class="flex justify-between gap-3">
+                          <span>Margin over 2nd</span>
+                          <span class="font-bold">{{
+                            margin(row) === null ? '—' : margin(row)!.toFixed(3) + ' d'
+                          }}</span>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                          <span>Median in space</span>
+                          <span class="font-bold">{{ row.proof.spread.median.toFixed(3) }} d</span>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                          <span>Worst in space</span>
+                          <span class="font-bold">{{ row.proof.spread.worst.toFixed(3) }} d</span>
+                        </div>
+                      </div>
+                      <template v-if="row.proof.runnersUp.length">
+                        <h4 class="mt-2 text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
+                          Runners-up
+                        </h4>
+                        <div
+                          v-for="(c, k) in row.proof.runnersUp"
+                          :key="k"
+                          class="font-mono text-[10px] text-slate-600"
+                        >
+                          {{ k + 2 }}. {{ c.chain.join(' ') }} {{ c.days.toFixed(3) }} d
+                          <span class="text-slate-400">+{{ (c.days - row.durationDays).toFixed(3) }}</span>
+                        </div>
+                      </template>
+                      <template v-if="row.proof.byAscensions.length">
+                        <h4 class="mt-2 text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">
+                          Best per ascension count
+                        </h4>
+                        <div
+                          v-for="(g, k) in row.proof.byAscensions"
+                          :key="k"
+                          class="font-mono text-[10px] text-slate-600"
+                        >
+                          {{ g.ascensions }} asc: {{ g.chain.join(' ') }} {{ g.days.toFixed(3) }} d
+                          <span class="text-slate-400">({{ g.priced.toLocaleString() }} priced)</span>
+                        </div>
+                      </template>
+                    </div>
                   </div>
                 </td>
               </tr>
@@ -204,8 +331,8 @@
 
       <p class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed">
         <span class="font-semibold">Durations are not directly comparable.</span> A chain's length depends on the
-        account's artifacts, research and starting TE as much as on the chain, and on whether the run was constrained
-        to the player's waking hours. Read this as "what shapes are winning for people", not as a ranking of players.
+        account's artifacts, research and starting TE as much as on the chain, and on whether the run was constrained to
+        the player's waking hours. Read this as "what shapes are winning for people", not as a ranking of players.
         <span class="font-semibold">Use</span> puts a chain into the Auto Planner so you can price it against
         <em>your</em> account — which is the only comparison that means anything.
       </p>
@@ -238,11 +365,51 @@ interface Row {
   holdShifts?: boolean;
   waitingHours?: number | null;
   chainsPriced?: number;
+  /** The chain the search descended from. Absent on an exhaustive run, which descends from none. */
+  seed?: number[];
+  /** ISO 8601, stamped by the app when the submission was built. */
+  submittedAt?: string;
   artifacts?: (string | { label: string; count: number })[];
   delivery?: { artifact: string; stones?: string[] }[];
   earnings?: { artifact: string; stones?: string[] }[];
   stones?: { label: string; count: number }[];
   legs?: { te: number; strategy: string; days: number; peakDeliveryQph: number }[];
+  /** Schema 4, Insane mode only: the space the run enumerated to prove its answer. Absent on
+   *  every searched row, which is what makes its presence the marker rather than a flag. */
+  space?: {
+    mode: 'bands' | 'range';
+    minGap: number;
+    minAscensions: number;
+    maxAscensions: number;
+    chains: number;
+    chainsPriced: number;
+    stoppedEarly: boolean;
+    range?: { lo: number; hi: number; step: number };
+    bands?: number[][];
+  };
+  /** Schema 5: what that space turned out to contain. Rides with `space` and never without it. */
+  proof?: {
+    runnersUp: { chain: number[]; days: number }[];
+    byAscensions: { ascensions: number; chain: number[]; days: number; priced: number }[];
+    spread: { best: number; median: number; worst: number };
+  };
+}
+
+/** How the checkpoint pool was stated: a stepped range, or hand-written bands. */
+function spaceWhere(sp: NonNullable<Row['space']>): string {
+  return sp.mode === 'range' && sp.range
+    ? `every ${sp.range.step} TE from ${sp.range.lo} to ${sp.range.hi}`
+    : 'listed bands';
+}
+function spaceAsc(sp: NonNullable<Row['space']>): string {
+  return sp.minAscensions === sp.maxAscensions ? String(sp.minAscensions) : `${sp.minAscensions}-${sp.maxAscensions}`;
+}
+
+/** How far ahead of the second best the winner is. Computed, never stored: it is a subtraction of
+ *  two numbers already on the row, and a stored copy is a third thing that can disagree. */
+function margin(row: Row): number | null {
+  const next = row.proof?.runnersUp?.[0];
+  return next ? next.days - row.durationDays : null;
 }
 
 const store = useChainSearchStore();
@@ -261,6 +428,10 @@ const COLUMNS: { key: SortKey; label: string; right?: boolean }[] = [
   // Without this, two rows from the same person that differ only by effort tier are
   // indistinguishable -- which is exactly the comparison the board now keeps rows for.
   { key: 'effort', label: 'Effort' },
+  // Dates matter here in a way they would not on a normal scoreboard: the simulator and the game
+  // both change, so a result from two months ago was produced by different code than one from
+  // yesterday, and a reader comparing them should be able to see that.
+  { key: 'submittedAt', label: 'Submitted' },
 ];
 
 const rows = ref<Row[]>([]);

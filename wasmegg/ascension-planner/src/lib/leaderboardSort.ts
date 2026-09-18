@@ -13,7 +13,8 @@ export type SortKey =
   | 'endLocal'
   | 'waitingHours'
   | 'window'
-  | 'effort';
+  | 'effort'
+  | 'submittedAt';
 
 export interface SortableRow {
   nickname?: string;
@@ -24,6 +25,8 @@ export interface SortableRow {
   waitingHours?: number | null;
   window?: string | null;
   effort?: string;
+  /** ISO 8601, so the default string compare below is already chronological. */
+  submittedAt?: string;
 }
 
 /**

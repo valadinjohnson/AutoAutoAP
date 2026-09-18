@@ -215,7 +215,29 @@ writing, for the case where someone posts a hand-made payload.
 
 Stored: chain, ascension count, duration, local start/end, timezone, TE range, effort tier,
 schedule window, whether shifts were held, waiting hours, per-leg strategy and peak delivery,
-chains priced, an optional 40-character nickname, and the inventory as described next.
+chains priced, the seed chain the search descended from, an optional 40-character nickname, and
+the inventory as described next.
+
+**Exhaustive runs carry two extra blocks, and nothing else does.** Insane mode proves an optimum
+over a stated space rather than finding a good answer in one, and the board is worth more if it
+can tell the difference:
+
+- `space` (schema 4) — what was searched: bands or a stepped range, the actual values per
+  checkpoint, the minimum gap, the ascension bounds, how many chains the space contains, how many
+  were priced, and whether the operator stopped it. `stoppedEarly` is the difference between a
+  result and a proof and is rendered as such: such a row shows **partial**, not **exhaustive**.
+- `proof` (schema 5) — what was found there: the runners-up with their durations, the best chain
+  at each ascension count with how many were priced at that count, and the best/median/worst
+  spread. The margin over second place is computed from these for display and deliberately not
+  stored — it is a subtraction of two numbers already on the row.
+
+Neither is present on a staged run. The `seed` is the mirror image: present on a staged run,
+absent on an exhaustive one, which enumerates rather than descending from a guess.
+
+Schema history: 2 narrowed the inventory, 3 added run cost and progression summaries, 4 added
+`space`, 5 added `proof` and `seed`. The Worker accepts 2–5 and stores the schema as sent, because
+the app and the Worker deploy separately and insisting on an exact match guarantees a window where
+every submission is refused.
 
 **Artifacts are labels; stones are counted, and both are narrowed.** Schema 2 sends the best piece
 per family by name -- eight entries, no numbers -- rather than every tier owned with exact counts.
@@ -249,12 +271,23 @@ constrained to the player's waking hours. It answers "what shapes are winning fo
 not "who is best". The page says so under the table.
 
 **One row per distinct RUN, not per person.** A submission is identified by nickname, target,
-chain, effort tier, schedule window and whether shifts were held. Two that agree on all of it are
+chain, effort tier, schedule window, whether shifts were held, and — for an exhaustive run — the
+space it covered. Two that agree on all of it are
 the same experiment priced twice -- a re-run, the same plan from a different start -- and the
 faster one stands for both. Two that differ anywhere are different experiments and both show,
 because "does `thorough` beat `balanced` here" and "does this shape travel between accounts" are
 the questions the board exists to answer, and an earlier version that kept one row per person per
 target deleted the evidence for both. Duration is deliberately not part of the identity.
+
+The space is in that key for a reason worth stating on its own: two Insane runs over *different*
+spaces can land on the same chain, and the wider one is the more valuable row because it rules out
+more. Every other field would have been identical, so without the space signature the wider proof
+collapsed into the narrower one and the survivor was whichever was posted first. A run stopped
+halfway and the same run later finished are still one experiment — `chainsPriced` and
+`stoppedEarly` are not in the signature — and the completed one takes the slot on its own merits,
+since over one space it cannot be slower than the partial attempt it supersedes. An exhaustive row
+and a staged row that happen to agree on a chain are also kept apart, which is correct: a proof and
+a heuristic hit are not the same submission even when the answer matches.
 
 Anonymous rows are never collapsed: anonymous is not an identity, and two people who both tried
 the same chain would otherwise cost one of them their result.

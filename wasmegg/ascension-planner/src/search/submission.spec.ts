@@ -14,6 +14,8 @@ import {
   scrubIdentifiers,
   submissionFilename,
   SUBMISSION_SCHEMA,
+  summariseProof,
+  PROOF_RUNNERS_UP,
   validateSubmission,
   type SubmissionInputs,
 } from './submission';
@@ -362,6 +364,145 @@ describe('buildSubmission: the space an exhaustive run covered', () => {
     });
     expect(s.space?.stoppedEarly).toBe(true);
     expect(s.space?.chainsPriced).toBe(2);
+  });
+});
+
+describe('summariseProof', () => {
+  const c = (chain: number[], days: number) => ({ chain, days });
+
+  it('needs two chains before there is anything to summarise', () => {
+    expect(summariseProof([c([299, 490], 900)], [299, 490])).toBeNull();
+    expect(summariseProof([], [299, 490])).toBeNull();
+  });
+
+  it('lists the runners-up in order, without the winner among them', () => {
+    const p = summariseProof([c([260, 490], 961.2), c([299, 490], 948.4), c([249, 490], 948.44)], [299, 490])!;
+    expect(p.runnersUp.map(r => r.chain)).toEqual([
+      [249, 490],
+      [260, 490],
+    ]);
+    expect(p.runnersUp[0].days).toBe(948.44);
+  });
+
+  // The winner comes from the run's own tracking, and a resumed run can carry one the current
+  // cache never held. Dropping the first entry by position would delete a real chain and promote
+  // the second best into a slot it did not earn.
+  it('drops the winner by chain, not by position', () => {
+    const p = summariseProof([c([249, 490], 900), c([260, 490], 950)], [999, 490])!;
+    expect(p.runnersUp.map(r => r.chain)).toEqual([
+      [249, 490],
+      [260, 490],
+    ]);
+  });
+
+  it('caps the runners-up so the block stays a summary', () => {
+    const many = Array.from({ length: 40 }, (_, k) => c([200 + k, 490], 900 + k));
+    expect(summariseProof(many, [200, 490])!.runnersUp).toHaveLength(PROOF_RUNNERS_UP);
+  });
+
+  // Both caches can hold the same chain -- see allEntries -- and a duplicated winner would
+  // otherwise appear as its own runner-up with a margin of zero, which reads as a tie.
+  it('collapses a chain priced twice, keeping the faster time', () => {
+    const p = summariseProof([c([299, 490], 948.4), c([299, 490], 950), c([260, 490], 961)], [299, 490])!;
+    expect(p.runnersUp).toHaveLength(1);
+    expect(p.spread.best).toBe(948.4);
+  });
+
+  it('reports the best at each ascension count, with how many were priced there', () => {
+    const p = summariseProof(
+      [c([299, 490], 948), c([250, 490], 970), c([249, 330, 490], 900), c([260, 340, 490], 905)],
+      [249, 330, 490]
+    )!;
+    expect(p.byAscensions).toEqual([
+      { ascensions: 2, priced: 2, chain: [299, 490], days: 948 },
+      { ascensions: 3, priced: 2, chain: [249, 330, 490], days: 900 },
+    ]);
+  });
+
+  it('leaves the per-count table empty when there is no comparison to make', () => {
+    expect(summariseProof([c([299, 490], 948), c([250, 490], 970)], [299, 490])!.byAscensions).toEqual([]);
+  });
+
+  it('reports the spread over everything priced', () => {
+    const p = summariseProof([c([1, 490], 100), c([2, 490], 200), c([3, 490], 900)], [1, 490])!;
+    expect(p.spread).toEqual({ best: 100, median: 200, worst: 900 });
+  });
+
+  it('ignores chains with no usable duration rather than sorting them to the top', () => {
+    const p = summariseProof([c([1, 490], 0), c([2, 490], Number.NaN), c([3, 490], 500), c([4, 490], 600)], [3, 490])!;
+    expect(p.spread).toEqual({ best: 500, median: 600, worst: 600 });
+    expect(p.runnersUp.map(r => r.chain)).toEqual([[4, 490]]);
+  });
+});
+
+describe('buildSubmission: what an exhaustive run found', () => {
+  const base = {
+    chain: [299, 490],
+    seconds: 948 * 86400,
+    legs: [],
+    planStart: 1_757_000_000,
+    timezone: 'UTC',
+    currentTE: 170,
+    finalTE: 490,
+    effort: 'balanced',
+    availability: null,
+    holdShifts: false,
+    artifacts: [],
+    stones: [],
+    chainsPriced: 2,
+    now: 1_757_100_000_000,
+  };
+  const proof = summariseProof(
+    [
+      { chain: [299, 490], days: 948 },
+      { chain: [249, 490], days: 949 },
+    ],
+    [299, 490]
+  );
+
+  it('is absent when the run had nothing to summarise', () => {
+    expect(buildSubmission({ ...base }).proof).toBeUndefined();
+    expect(buildSubmission({ ...base, proof: null }).proof).toBeUndefined();
+  });
+
+  it('rides along when there is one', () => {
+    expect(buildSubmission({ ...base, proof }).proof?.runnersUp[0].chain).toEqual([249, 490]);
+  });
+});
+
+describe('buildSubmission: the seed a staged run descended from', () => {
+  const base = {
+    chain: [299, 490],
+    seconds: 948 * 86400,
+    legs: [],
+    planStart: 1_757_000_000,
+    timezone: 'UTC',
+    currentTE: 170,
+    finalTE: 490,
+    effort: 'balanced',
+    availability: null,
+    holdShifts: false,
+    artifacts: [],
+    stones: [],
+    chainsPriced: 2,
+    now: 1_757_100_000_000,
+  };
+
+  it('carries the seed through', () => {
+    expect(buildSubmission({ ...base, seed: [195, 490] }).seed).toEqual([195, 490]);
+  });
+
+  it('copies it, so a later edit to the run cannot rewrite a sent submission', () => {
+    const seed = [195, 490];
+    const s = buildSubmission({ ...base, seed });
+    seed[0] = 999;
+    expect(s.seed).toEqual([195, 490]);
+  });
+
+  it('is absent when there was no seed, rather than an empty list', () => {
+    expect(buildSubmission({ ...base }).seed).toBeUndefined();
+    expect(buildSubmission({ ...base, seed: [] }).seed).toBeUndefined();
+    expect(buildSubmission({ ...base, seed: null }).seed).toBeUndefined();
   });
 });
 

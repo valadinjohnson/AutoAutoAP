@@ -321,10 +321,7 @@ import { useAscensionGenerator } from '@/auto/useAscensionGenerator';
 import { useChainSearchStore } from '@/stores/chainSearch';
 import { useEarningsClothedTE } from '@/composables/useEarningsClothedTE';
 import { loadAutoPlannerSchedule, saveAutoPlannerSchedule } from '@/lib/autoPlannerFormCache';
-import { formatUnixToDateInput, formatUnixToTimeInput } from '@/lib/format';
-import { getLocalTimestampInTimezone } from '@/lib/events';
-import { resolvePlanStart } from '@/lib/planStartTime';
-import { useInitialStateStore } from '@/stores/initialState';
+import { useBackupPlanStart } from '@/composables/useBackupPlanStart';
 import { isTestingEnvironment } from '@/lib/isTestingEnvironment';
 import { iconURL } from 'lib';
 import SchedulingInputs from './SchedulingInputs.vue';
@@ -338,7 +335,6 @@ import ValidationDialog from './ValidationDialog.vue';
 const autoPlannerStore = useAutoPlannerStore();
 const virtueStore = useVirtueStore();
 const truthEggsStore = useTruthEggsStore();
-const initialStateStore = useInitialStateStore();
 
 const { ascensionChain, timezone, startDate, startTime, targetTE, deferForEarningsMode } =
   storeToRefs(autoPlannerStore);
@@ -372,38 +368,9 @@ if (!timezone.value) {
   timezone.value = virtueStore.ascensionTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
-/**
- * Default the plan start to the moment the backup was taken, not to `now`.
- *
- * The rule and the reasoning live in `lib/planStartTime.ts`, which is tested directly; this only
- * converts between its unix seconds and the date/time input strings the form holds.
- *
- * `immediate` handles the usual case, where the backup is already loaded by the time this tab
- * mounts. The watch covers a backup arriving afterwards (a refresh, or a player ID submitted with
- * the Auto tab already open). Only the first backup to arrive sets the default, so a later refresh
- * never overwrites a start time the user has typed since.
- */
-let startDefaulted = false;
-watch(
-  () => initialStateStore.rawBackup?.approxTime,
-  approxTime => {
-    if (startDefaulted) return;
-    const backupSeconds = typeof approxTime === 'number' ? approxTime : null;
-    const currentSeconds =
-      startDate.value && startTime.value
-        ? getLocalTimestampInTimezone(startDate.value, startTime.value, timezone.value)
-        : null;
-
-    const resolved = resolvePlanStart({ backupSeconds, currentSeconds, nowSeconds: Date.now() / 1000 });
-    if (resolved !== null) {
-      startDate.value = formatUnixToDateInput(resolved, timezone.value);
-      startTime.value = formatUnixToTimeInput(resolved, timezone.value);
-    }
-    // Without a usable backup there is nothing better to sync to, so stay open to a later one.
-    if (backupSeconds !== null && backupSeconds > 0) startDefaulted = true;
-  },
-  { immediate: true }
-);
+// Plan start defaults to the backup's timestamp. Lives in a composable rather than here because
+// Insane mode replaces this component and needs the same default -- see useBackupPlanStart.
+useBackupPlanStart();
 
 // Initialize Target TE to current + 30 once store data loads
 let targetTEInitialized = false;

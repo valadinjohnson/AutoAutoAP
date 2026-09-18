@@ -8,7 +8,14 @@
  */
 import { describe, expect, it } from 'vitest';
 import { getLocalTimestampInTimezone } from '@/lib/events';
-import { buildChainsCsv, describeLoadout, describeVirtueInventory, formatInZone } from './csv';
+import {
+  buildChainsCsv,
+  chainsCsvChunks,
+  CHUNK_ROWS,
+  describeLoadout,
+  describeVirtueInventory,
+  formatInZone,
+} from './csv';
 import type { CacheEntry } from './driver';
 import type { LegSummary } from './types';
 
@@ -47,13 +54,14 @@ function leg(over: Partial<LegSummary> = {}): LegSummary {
 
 /** Data rows only — the `#` header block and the column line are asserted separately. */
 function dataRows(csv: string): string[] {
-  return csv
-    .split('\n')
-    .filter(l => l && !l.startsWith('#') && !l.startsWith('rank,'));
+  return csv.split('\n').filter(l => l && !l.startsWith('#') && !l.startsWith('rank,'));
 }
 
 function column(csv: string, row: number, name: string): string {
-  const header = csv.split('\n').find(l => l.startsWith('rank,'))!.split(',');
+  const header = csv
+    .split('\n')
+    .find(l => l.startsWith('rank,'))!
+    .split(',');
   return dataRows(csv)[row].split(',')[header.indexOf(name)];
 }
 
@@ -109,9 +117,7 @@ describe('buildChainsCsv', () => {
   it('recovers the sale count from the strategy key when the field is absent', () => {
     // Legs restored from a checkpoint written before these fields existed have no
     // `buildPhaseSaleCount`, but `2-sale-tier13` still says 2.
-    const entries: CacheEntry[] = [
-      { key: '195,490', seconds: 86400, legs: [leg({ buildPhaseSaleCount: undefined })] },
-    ];
+    const entries: CacheEntry[] = [{ key: '195,490', seconds: 86400, legs: [leg({ buildPhaseSaleCount: undefined })] }];
     expect(column(buildChainsCsv(entries, META), 0, 'sales')).toBe('2');
   });
 
@@ -207,5 +213,61 @@ describe('describeLoadout', () => {
     // The point of not reusing `summarizeLoadout`: that one emits <img> tags.
     const text = describeLoadout([{ artifactId: 'puzzle-cube-4-3', stones: [null, null, null] }]);
     expect(text).not.toContain('<');
+  });
+});
+
+describe('chainsCsvChunks', () => {
+  /** Big enough to cross a chunk boundary and no bigger: every row costs several Intl format
+   *  calls, so these are sized to just clear CHUNK_ROWS rather than to a round number of chains. */
+  const justOverOneChunk = (legsEach: number) => Math.ceil(CHUNK_ROWS / legsEach) + 5;
+  const runOf = (chains: number, legsEach: number): CacheEntry[] =>
+    Array.from({ length: chains }, (_, k) => ({
+      key: `${180 + k},490`,
+      seconds: (600 + k) * 86400,
+      legs: Array.from({ length: legsEach }, () => leg()),
+    }));
+
+  // The download path builds its Blob from these pieces, so a chunk boundary that inserted,
+  // dropped or duplicated a byte would produce a file that opens and is subtly wrong -- far worse
+  // than one that fails to download. Pinned against the string builder, whose contents every other
+  // test in this file already checks.
+  it('joins back to exactly the one-string build', () => {
+    const entries = runOf(justOverOneChunk(2), 2);
+    expect([...chainsCsvChunks(entries, META)].join('')).toBe(buildChainsCsv(entries, META));
+    // Generous timeout, not a slow test to fix: crossing a boundary means a couple of thousand
+    // rows, and every row runs several Intl format calls. Under the default 5s it passed alone and
+    // timed out inside the full suite, which is the worst kind of flake.
+  }, 30_000);
+
+  it('actually splits a large run, rather than yielding one chunk', () => {
+    expect([...chainsCsvChunks(runOf(justOverOneChunk(1), 1), META)].length).toBeGreaterThan(1);
+  }, 30_000);
+
+  it('keeps a small run in a single chunk', () => {
+    expect([...chainsCsvChunks(runOf(3, 1), META)]).toHaveLength(1);
+  });
+
+  // A boundary inside one chain's legs would still make a correct file, but keeping chains whole
+  // is what the buffer check promises, and a rank split across two chunks would be a nuisance for
+  // anything consuming the stream a piece at a time.
+  it('never splits a chain across two chunks', () => {
+    for (const chunk of chainsCsvChunks(runOf(justOverOneChunk(3), 3), META)) {
+      const counts = new Map<string, number>();
+      for (const row of dataRows(chunk)) {
+        const rank = row.split(',')[0];
+        counts.set(rank, (counts.get(rank) ?? 0) + 1);
+      }
+      expect([...counts.values()].every(n => n === 3)).toBe(true);
+    }
+  }, 30_000);
+
+  it('ends the file with a newline, exactly once', () => {
+    const csv = [...chainsCsvChunks(runOf(1, 1), META)].join('');
+    expect(csv.endsWith('\n')).toBe(true);
+    expect(csv.endsWith('\n\n')).toBe(false);
+  });
+
+  it('yields nothing but the header block for a run with no entries', () => {
+    expect(dataRows([...chainsCsvChunks([], META)].join(''))).toEqual([]);
   });
 });

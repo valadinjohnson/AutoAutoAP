@@ -1330,7 +1330,8 @@
         <pre
           v-if="showPayload"
           class="max-h-64 overflow-auto rounded-lg bg-slate-900 p-3 text-[10px] leading-relaxed text-slate-200"
-          >{{ payloadPreview }}</pre>
+          >{{ payloadPreview }}</pre
+        >
 
         <p class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed">
           <span class="font-black uppercase tracking-wide">What this does and does not include.</span>
@@ -1465,6 +1466,7 @@ import SearchShapeChart from './charts/SearchShapeChart.vue';
 import type { EffortTier, LegSummary } from '@/search/types';
 import type { ShortlistRow } from '@/search/shortlist';
 import { VIEWS } from '@/search/views';
+import { downloadParts } from '@/utils/export';
 
 const props = defineProps<{ playerId: string }>();
 
@@ -1637,14 +1639,10 @@ function downloadSubmission(): void {
   submitMessage.value = 'Saved. Share it wherever you like.';
 }
 
+/** Chunked for the same reason the Insane panel's is: a long run's table is tens of megabytes, and
+ *  the one-string version needs three copies of it alive at once. See `chainsCsvChunks`. */
 function downloadCsv(): void {
-  const blob = new Blob([store.exportCsv()], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = store.csvFilename();
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadParts(store.csvFilename(), store.exportCsvChunks(), 'text/csv;charset=utf-8');
 }
 
 /** The finish INSTANT, not the duration: durations from different plan starts are not comparable,

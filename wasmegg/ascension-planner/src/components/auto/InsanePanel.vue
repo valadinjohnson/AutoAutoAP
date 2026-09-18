@@ -52,6 +52,157 @@
         </p>
       </div>
 
+      <!--
+        When the plan runs, and around what. Bound to the SAME store fields the Auto Planner and
+        Chain Search write, so this is one setting shown in a second place rather than a second
+        setting -- change it here and the main panels agree, and vice versa.
+
+        It is here because Insane mode replaces those panels rather than sitting beside them: with
+        no controls of its own, an exhaustive run silently took whatever the defaults happened to
+        be -- no schedule at all, timed from the moment the page loaded -- and then reported a
+        finish date computed from them. Every number this panel produces is a date, so the inputs
+        that decide dates cannot live on a tab you have to leave the mode to reach.
+      -->
+      <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
+        <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">When the plan runs</h3>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <label class="space-y-1">
+            <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Plan starts</span>
+            <input
+              v-model="autoPlannerStore.startDate"
+              type="date"
+              class="w-full rounded-lg border-slate-200 text-sm font-bold text-slate-800"
+            />
+          </label>
+          <label class="space-y-1">
+            <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">At</span>
+            <input
+              v-model="autoPlannerStore.startTime"
+              type="time"
+              class="w-full rounded-lg border-slate-200 text-sm font-bold text-slate-800"
+            />
+          </label>
+          <div class="space-y-1">
+            <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Timezone</span>
+            <p class="text-sm font-bold text-slate-700 truncate">{{ autoPlannerStore.timezone }}</p>
+          </div>
+        </div>
+        <!-- An unset start is not harmless: it means "now", which moves on every reload, and plan
+             start is part of the run fingerprint -- so a checkpoint saved before a refresh stops
+             matching and a long run restarts from nothing. -->
+        <p v-if="store.planStartIsNow" class="text-[11px] font-semibold text-amber-700 leading-relaxed">
+          No start set, so the plan is timed from right now — which moves every time you reload, and takes your saved
+          checkpoint with it. Set a date and time before starting a long run.
+        </p>
+
+        <label class="flex items-start gap-3 cursor-pointer">
+          <input
+            v-model="store.scheduleEnabled"
+            type="checkbox"
+            class="mt-0.5 rounded border-slate-300 text-indigo-600"
+          />
+          <span class="text-[11px] text-slate-600 leading-relaxed">
+            <span class="font-bold text-slate-800">Only count on me during these hours.</span> Off means the plan
+            assumes you are available at any hour, which is the faster answer and not usually the real one.
+          </span>
+        </label>
+        <div v-if="store.scheduleEnabled" class="pl-8 space-y-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <label class="flex items-center gap-2 text-[11px] font-bold text-slate-600">
+              From
+              <input
+                v-model.number="store.availableFrom"
+                type="number"
+                min="0"
+                max="23"
+                class="w-20 rounded-lg border-slate-200 text-sm font-bold text-slate-800"
+              />
+            </label>
+            <label class="flex items-center gap-2 text-[11px] font-bold text-slate-600">
+              to
+              <input
+                v-model.number="store.availableTo"
+                type="number"
+                min="0"
+                max="23"
+                class="w-20 rounded-lg border-slate-200 text-sm font-bold text-slate-800"
+              />
+            </label>
+            <div class="flex flex-wrap gap-1">
+              <button
+                v-for="(label, day) in DAY_LABELS"
+                :key="day"
+                type="button"
+                class="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest"
+                :class="
+                  store.availableDays.includes(day)
+                    ? 'bg-slate-800 text-white'
+                    : 'border border-slate-200 text-slate-400 hover:text-slate-600'
+                "
+                @click="toggleDay(day)"
+              >
+                {{ label }}
+              </button>
+            </div>
+          </div>
+          <!-- Ticked but describing no restriction at all is a trap: it reads as a constraint and
+               is not one. Say so rather than letting the run be misread. -->
+          <p v-if="store.scheduleIsEmpty" class="text-[11px] font-semibold text-amber-700">
+            Every day, all hours — that is no restriction at all, and will be recorded as no schedule.
+          </p>
+          <p v-else class="text-[11px] text-slate-500">{{ store.availabilityLabel }}</p>
+        </div>
+
+        <label class="flex items-start gap-3 cursor-pointer">
+          <input v-model="store.deferShifts" type="checkbox" class="mt-0.5 rounded border-slate-300 text-indigo-600" />
+          <span class="text-[11px] text-slate-600 leading-relaxed">
+            <span class="font-bold text-slate-800">Hold egg shifts for my waking hours.</span> Costs time and is what
+            most people actually do.
+          </span>
+        </label>
+      </div>
+
+      <!--
+        The memory budget. A browser gives a page no way to ASK for memory, so the only honest knob
+        is how much this run chooses to keep: a priced chain's answer is tens of bytes and its
+        per-leg detail is kilobytes, so the detail is the entire question.
+      -->
+      <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+        <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Memory</h3>
+        <div class="flex flex-wrap items-end gap-4">
+          <label class="space-y-1">
+            <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+              Keep per-leg detail for
+            </span>
+            <div class="flex items-center gap-2">
+              <input
+                v-model.number="store.legDetailBudget"
+                type="number"
+                min="0"
+                step="500"
+                class="w-32 rounded-lg border-slate-200 text-sm font-bold text-slate-800"
+              />
+              <span class="text-[11px] font-bold text-slate-500">fastest chains</span>
+            </div>
+          </label>
+          <p class="text-[11px] text-slate-500">
+            Holding detail for
+            <span class="font-bold text-slate-700">{{ store.legsHeld.toLocaleString() }}</span> chains,
+            <span class="font-bold text-slate-700">{{ heldMb }}</span> —
+            <span v-if="heapLimitMb">{{ heapUsedMb }} of {{ heapLimitMb }} used in this tab.</span>
+            <span v-else>this browser does not report heap usage.</span>
+          </p>
+        </div>
+        <p class="text-[11px] text-slate-500 leading-relaxed">
+          Every chain keeps its duration no matter what — that is the answer, and it is what the leaderboard, the CSV
+          totals and the checkpoint are built from. What gets dropped past this number is the per-leg timing detail for
+          the chains you did not win with, which is what the runners-up table opens.
+          <span class="font-bold text-slate-700">0 means keep everything</span>, which on a run of hundreds of thousands
+          of chains is how a tab gets killed overnight with nothing in the log.
+        </p>
+      </div>
+
       <!-- The space. These numbers are the whole definition of the search. -->
       <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-5">
         <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">The space to search</h3>
@@ -548,13 +699,58 @@
         <h3 class="text-[10px] font-black text-indigo-800 uppercase tracking-widest">Share this result</h3>
         <p class="text-[11px] text-indigo-900/80 leading-relaxed">
           An exhaustive result is the most useful thing the board can receive: a proven optimum of a stated space rather
-          than a search result. A run opened from the library above submits without a run cost, because the time it took
-          was not this machine's.
+          than a search result. It goes with the space it covered and what it found there — the runners-up, the best
+          chain at each ascension count, and the spread — so a reader can tell a real find from a flat neighbourhood
+          without downloading the CSV. A run opened from the library above submits without a run cost, because the time
+          it took was not this machine's.
         </p>
         <label class="flex items-start gap-3 text-xs text-indigo-900">
           <input v-model="optIn" type="checkbox" class="mt-0.5 rounded border-indigo-300 text-indigo-600" />
           <span>Yes, contribute this result. Artifact inventory, timezone and local plan start are included.</span>
         </label>
+
+        <!-- Credit, behind the opt-in like everything else that leaves the machine. Anonymous is
+             the default: crediting yourself should be a choice, not the fallback. -->
+        <div v-if="optIn" class="space-y-2">
+          <div class="flex flex-wrap items-center gap-4">
+            <label class="flex items-center gap-2 cursor-pointer text-[11px] font-bold text-indigo-900">
+              <input v-model="anonymous" type="radio" :value="true" class="text-indigo-600" />
+              Submit anonymously
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer text-[11px] font-bold text-indigo-900">
+              <input v-model="anonymous" type="radio" :value="false" class="text-indigo-600" />
+              Credit me as
+            </label>
+            <input
+              v-model="nickname"
+              type="text"
+              :maxlength="NICKNAME_MAX"
+              :disabled="anonymous"
+              placeholder="nickname"
+              aria-label="Nickname"
+              class="rounded-lg border-indigo-200 text-sm font-bold text-slate-800 w-48 disabled:opacity-40"
+              @input="nicknameTouched = true"
+            />
+          </div>
+          <label class="flex items-start gap-3 cursor-pointer text-[11px] text-indigo-900/80">
+            <input
+              v-model="stampName"
+              type="checkbox"
+              :disabled="anonymous"
+              class="mt-0.5 rounded border-indigo-300 text-indigo-600 disabled:opacity-40"
+            />
+            <span>
+              <span class="font-bold">Add the time to the name.</span> Optional. The board already keeps each space you
+              prove as its own row, so nothing is lost without this — it is just a way to tell your own runs apart at a
+              glance when several are on the board.
+            </span>
+          </label>
+          <p v-if="!anonymous" class="text-[11px] text-indigo-900/70">
+            Submitting as
+            <span class="font-mono-premium font-bold">{{ effectiveNickname || '(blank — anonymous)' }}</span>
+          </p>
+        </div>
+
         <div class="flex flex-wrap gap-2">
           <button
             v-if="store.submitUrl"
@@ -585,6 +781,8 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useChainSearchStore } from '@/stores/chainSearch';
 import { useAutoPlannerStore } from '@/stores/autoPlanner';
+import { useEidsStore } from 'lib';
+import { useBackupPlanStart } from '@/composables/useBackupPlanStart';
 import {
   buildPool,
   countChains,
@@ -600,17 +798,25 @@ import {
 import { MAX_RUNS } from '@/search/runLibrary';
 import SearchShapeChart from './charts/SearchShapeChart.vue';
 import HelpTip from './HelpTip.vue';
-import { downloadFile } from '@/utils/export';
+import { downloadParts } from '@/utils/export';
 
 /**
- * `exportCsv()` builds the text and hands it back; it does not save anything. This panel used to
- * call it straight from the click handler, which built the whole CSV and dropped it on the floor.
+ * `exportCsvChunks()` yields the text and hands it back; it does not save anything. This panel used
+ * to call the string version straight from the click handler, which built the whole CSV and
+ * dropped it on the floor.
+ *
+ * Chunked, because this is the panel whose runs get big enough for it to matter -- a large export
+ * was crashing the tab outright rather than failing. See `chainsCsvChunks`.
  */
 function downloadCsv(): void {
-  downloadFile(store.csvFilename(), store.exportCsv(), 'text/csv;charset=utf-8');
+  downloadParts(store.csvFilename(), store.exportCsvChunks(), 'text/csv;charset=utf-8');
 }
 
 const props = defineProps<{ playerId: string }>();
+
+// The same backup-to-plan-start default the Auto Planner gets. This panel replaces that form, so
+// without this the one mode whose every output is a date ran from "whenever the page loaded".
+useBackupPlanStart();
 const store = useChainSearchStore();
 const autoPlannerStore = useAutoPlannerStore();
 
@@ -641,6 +847,38 @@ function applySuggestion(): void {
   spaceMode.value = 'bands';
 }
 
+/** Sunday-first, matching `availableDays`, which stores JS `getDay()` numbers. */
+const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+function toggleDay(day: number): void {
+  const days = store.availableDays;
+  const i = days.indexOf(day);
+  // Mutated in place rather than reassigned: `availableDays` is a ref on the store that other
+  // panels read, and swapping the array would leave any existing reference pointing at the old one.
+  if (i === -1) days.push(day);
+  else days.splice(i, 1);
+}
+
+/**
+ * Heap readout, where the browser offers one.
+ *
+ * `performance.memory` is a Chromium-only, non-standard extension and its figures are quantised, so
+ * this is a gauge and not an accounting record -- which is all it needs to be. Firefox and Safari
+ * report nothing and the panel says so rather than showing a made-up number.
+ */
+const heap = ref<{ used: number; limit: number } | null>(null);
+let heapTimer: ReturnType<typeof setInterval> | null = null;
+
+function readHeap(): void {
+  const m = (performance as Performance & { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } }).memory;
+  heap.value = m ? { used: m.usedJSHeapSize, limit: m.jsHeapSizeLimit } : null;
+}
+
+const mb = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+const heldMb = computed(() => mb(store.legDetailBytes));
+const heapUsedMb = computed(() => (heap.value ? mb(heap.value.used) : ''));
+const heapLimitMb = computed(() => (heap.value ? mb(heap.value.limit) : ''));
+
 const rangeLo = ref(185);
 const rangeHi = ref(390);
 const rangeStep = ref(15);
@@ -650,6 +888,64 @@ const maxAsc = ref(7);
 const saveLabel = ref('');
 const saving = ref(false);
 const optIn = ref(false);
+
+/**
+ * Credit. Same shape as the main panel's, deliberately -- this panel had no nickname field at all,
+ * so every exhaustive result reached the board as `anonymous` no matter who ran it.
+ *
+ * The collector caps a nickname at 40 characters and TRUNCATES rather than rejecting, so the stamp
+ * has to be budgeted for here: a name typed to the full length with the date appended would come
+ * back from the board with the date sliced off, which is the one failure that would quietly undo
+ * the reason for having it.
+ */
+const NICKNAME_MAX = 40;
+/** ` YYYY-MM-DD HH:MM` -- the space plus sixteen characters. */
+const STAMP_LEN = 17;
+
+const anonymous = ref(true);
+/** Off by default, because it is now a convenience rather than a fix.
+ *
+ *  It was introduced as a workaround: the board collapsed re-runs on
+ *  (nickname, target, chain, effort, window, shifts), so two exhaustive runs by the same person
+ *  that landed on the same chain over DIFFERENT spaces became one row, and the survivor was
+ *  whichever was posted first rather than the one that proved more. The collector now puts the
+ *  space in that key, so both rows stand on their own and a dated name buys nothing but
+ *  legibility. Defaulting it on would be decorating every name to solve a problem that is fixed. */
+const stampName = ref(false);
+const nicknameTouched = ref(false);
+
+/** The name already in the header's ID box. Deliberately not `displayName()`, which falls back to
+ *  the raw EID for an account with no username -- that would put a player ID into a payload whose
+ *  consent text promises it is not there. Blank is the right default in that case. */
+const eidsStore = useEidsStore();
+const accountName = computed(() => {
+  const entry = eidsStore.eids.get(props.playerId.trim());
+  return entry?.nickname || entry?.username || '';
+});
+const nickname = ref(accountName.value);
+// The username arrives when a backup finishes loading, which can be after this panel mounts.
+// Follow it until the player edits the box themselves.
+watch(accountName, name => {
+  if (!nicknameTouched.value) nickname.value = name;
+});
+
+/** Local time, not UTC: it sits next to `startLocal` and `endLocal` on the row, which are local
+ *  too, and a stamp in a timezone the submitter never saw would read as somebody else's clock. */
+function localStamp(d = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** What actually goes on the row. Anonymous wins over whatever is in the box, so a half-typed name
+ *  cannot be sent by someone who then picked anonymous. */
+const effectiveNickname = computed(() => {
+  if (anonymous.value) return '';
+  const base = nickname.value.trim();
+  if (!base) return '';
+  if (!stampName.value) return base.slice(0, NICKNAME_MAX);
+  return `${base.slice(0, NICKNAME_MAX - STAMP_LEN)} ${localStamp()}`;
+});
+
 const submitting = ref(false);
 const submitMessage = ref('');
 const submitOk = ref(false);
@@ -728,9 +1024,7 @@ const suggestRange = computed<[number, number]>(() => [
 
 const measuredCost = computed(() => (store.secondsPerChain > 0 ? store.secondsPerChain : 0));
 
-const hours = computed(() =>
-  estimateHours(chainCount.value, store.workersInPool, measuredCost.value || undefined)
-);
+const hours = computed(() => estimateHours(chainCount.value, store.workersInPool, measuredCost.value || undefined));
 
 /**
  * Once a run is going, project from what it has ACTUALLY done: elapsed x remaining / done. That
@@ -779,7 +1073,12 @@ watch(
 
 onMounted(() => {
   void store.refreshSavedRuns(props.playerId);
+  readHeap();
+  // Five seconds, not one: it is a slow-moving gauge, and polling it on the frame timer would put a
+  // reactive write in front of a run that is already competing for the main thread.
+  heapTimer = setInterval(readHeap, 5000);
 });
+onUnmounted(() => heapTimer && clearInterval(heapTimer));
 
 async function start(): Promise<void> {
   await store.startExhaustive(props.playerId, {
@@ -815,7 +1114,7 @@ async function submit(): Promise<void> {
   submitting.value = true;
   submitMessage.value = '';
   try {
-    const payload = store.buildRunSubmission();
+    const payload = store.buildRunSubmission(effectiveNickname.value);
     if (!payload) {
       submitOk.value = false;
       submitMessage.value = 'Nothing to submit yet.';

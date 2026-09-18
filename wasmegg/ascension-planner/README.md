@@ -182,6 +182,52 @@ zero — it sorts last under "Kindest to my schedule" and shows `not recorded`. 
 date" needs a plan start to know which day a chain lands on; without one it falls back to the
 ranking rather than collapsing every chain onto the same epoch day.
 
+### Leaving a long run overnight (browser)
+
+An exhaustive run is hours to days of work in a tab, and the two things that end one early are
+both the browser's doing rather than the search's. Neither produces an error in the log, which
+is what makes them confusing: you come back to a stopped run, or to a page that says
+*"This page is having a problem"* with a crash code.
+
+**Memory.** A priced chain is two things: its answer — a key and a duration, tens of bytes —
+and its per-leg detail, which carries each leg's twelve shifts as objects and runs to
+kilobytes. Hundreds of thousands of chains of the second thing is how a renderer reaches its
+heap ceiling (4 GB in Chrome and Edge on 64-bit; the Insane panel shows the tab's current
+usage against it). The panel's **Memory** card sets how many chains keep their detail — the
+fastest N, defaulting from `navigator.deviceMemory` where the browser reports it. Everything
+past N keeps its duration, which is the answer and what the leaderboard, the CSV totals, the
+checkpoint and the proof block are all built from; what is dropped is the per-leg timing for
+chains you did not win with. This is the same trade the checkpoint has always made:
+`buildCheckpoint` persists `durations` for every chain and `bestLegs` for one.
+
+There is no way for a page to request or cap memory, so "how much should this use" can only be
+answered as "how much should it choose to hold". Setting the budget to `0` keeps everything,
+which is a real choice for a short run on a machine with room.
+
+**Freezing and discarding.** These are two different mechanisms and only one of them can be
+argued with from code.
+
+- *Freezing* (Chrome/Edge Energy Saver) suspends a tab's task queues once every page in the
+  group has been hidden and silent for about five minutes. Chromium's freezing policy has an
+  explicit opt-out list, and one entry on it is a page "holding a Web Lock or an IndexedDB
+  transaction" — so the run takes a Web Lock for its whole duration. That is not a trick; it
+  is the documented way to say this tab is doing something.
+- *Discarding* (Memory Saver) kills a background tab outright under memory pressure. **No API
+  prevents it.** There is no event before it happens; the page only learns about it afterwards,
+  via `document.wasDiscarded` on the reload. The defences are the checkpoint and the memory
+  budget, not code that asks the browser to stop.
+
+If you leave runs overnight, exempt the site in the browser itself:
+
+| browser | where |
+|---|---|
+| Chrome | `chrome://settings/performance` → Memory Saver → **Always keep these sites active** |
+| Edge | `edge://settings/system` → Sleeping tabs → **Never put these sites to sleep** |
+
+The run also checkpoints on `visibilitychange` as well as on its timer, because
+`beforeunload` and `unload` do **not** fire when a tab is discarded — going hidden is the last
+moment a page is reliably given.
+
 ### The older Python driver
 
 `scripts/autoplan.py` predates the shared driver and reimplements the staged search in
@@ -437,9 +483,12 @@ answer — which is what the effort slider sells.
   candidate is handicapped identically, but the absolute dates drift, worst at the far end.
   The panel shows the inventory it used and says so; the CSV header records it too. Re-run
   after significant crafting.
-- **The browser's CSV export loses per-leg detail across a refresh.** A checkpoint keeps
-  `legs` for the best chain alone, so replayed chains export their total with the per-leg
-  cells blank. Chains priced in the current session are complete.
+- **The browser's CSV export loses per-leg detail across a refresh, and past the memory
+  budget.** A checkpoint keeps `legs` for the best chain alone, so replayed chains export
+  their total with the per-leg cells blank. Chains priced in the current session are complete
+  up to the Insane panel's memory budget, past which the slowest chains are stripped to their
+  durations while the run is still going — see *Leaving a long run overnight*. Both are the
+  same trade and both are visible in the CSV the same way.
 
 ---
 
