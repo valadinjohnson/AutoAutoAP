@@ -275,6 +275,14 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
   const startedAt = ref(0);
   /** A checkpoint from a previous session that matches the current inputs, if any. */
   const resumable = ref<SearchCheckpoint | null>(null);
+
+  /**
+   * The saved run currently loaded into the panel, when one is.
+   *
+   * Held so Resume knows which run's cache is in memory, and so the panel can explain WHY a run
+   * cannot be resumed rather than just disabling a button.
+   */
+  const openedRun = ref<RunSummary | null>(null);
   /** Chains replayed from a checkpoint at the start of this run. They cost nothing to re-obtain,
    *  so they are counted separately from `chainsDone`, which is real simulation. */
   const chainsReplayed = ref(0);
@@ -549,6 +557,11 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       bestLegs: bestLegs.value,
       runLog: runLog.value,
       complete: finishedCleanly.value,
+      // What it was searching and under what inputs. Without these a saved run can be LOOKED AT and
+      // not picked back up -- which is how an interrupted overnight run became an afternoon of
+      // re-pricing chains that were already sitting in the file.
+      ...(searchSpace.value ? { space: searchSpace.value } : {}),
+      fingerprint: fingerprint(playerId),
     });
     await refreshSavedRuns(playerId);
     return summary;
@@ -562,12 +575,22 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
    * the runners-up read the same cache, so both come back too.
    */
   async function openSavedRun(playerId: string, id: string): Promise<boolean> {
+    // Recorded here as well as when a run starts. `resumeBlocker` compares the saved run's
+    // fingerprint against the CURRENT inputs, and it needs a player id to compute one -- without
+    // this it had none until a search had already run, so the guard silently passed and a run whose
+    // plan start had since moved looked perfectly resumable. Measured: changing the start date
+    // after opening a saved run left `canResumeOpenedRun` true.
+    currentPlayerId = playerId;
     const summary = savedRuns.value.find(r => r.id === id);
     const body = await loadRun(await hashID(playerId), id);
     if (!summary || !body) return false;
 
     liveCache = body.entries;
     coarseCache = [];
+    // Restored so the panel can say what this run covered, and so Resume has a space to hand back
+    // to `startExhaustive`. Absent on a staged run and on anything saved before library version 2.
+    searchSpace.value = summary.space ? { ...summary.space } : null;
+    openedRun.value = summary;
     bestChain.value = [...summary.bestChain];
     bestDays.value = summary.bestDays;
     bestLegs.value = body.bestLegs;
@@ -583,6 +606,89 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     runStartedAt.value = 0;
     runEndedAt.value = 0;
     refreshShortlist(true);
+    return true;
+  }
+
+  /**
+   * An interrupted exhaustive run this machine can carry straight on with.
+   *
+   * `resumable` is the raw checkpoint; this is the narrower question the panel asks: is there one,
+   * did it not finish, and does it know what it was searching. The last part is what a checkpoint
+   * written before `space` existed cannot answer -- it still replays if you happen to set up the
+   * identical space by hand, but it cannot offer to do it for you.
+   */
+  const crashedRun = computed(() => {
+    const cp = resumable.value;
+    return cp && !cp.complete && cp.space ? cp : null;
+  });
+
+  /** Carry on an interrupted run from its checkpoint. The durations replay inside
+   *  `startExhaustive`; this only has to hand back the space the checkpoint recorded. */
+  async function resumeCrashedRun(playerId: string): Promise<boolean> {
+    const sp = crashedRun.value?.space;
+    if (!sp) return false;
+    await startExhaustive(playerId, {
+      lo: sp.range?.lo ?? 0,
+      hi: sp.range?.hi ?? 0,
+      step: sp.range?.step ?? 1,
+      minAsc: sp.minAscensions,
+      maxAsc: sp.maxAscensions,
+      minGap: sp.minGap,
+      ...(sp.mode === 'bands' && sp.bands?.length ? { bands: sp.bands.map(b => [...b]) } : {}),
+    });
+    return true;
+  }
+
+  /**
+   * Why the loaded run can or cannot be continued, in a form the panel can print.
+   *
+   * Three separate reasons, kept separate on purpose. "Finished" and "saved before this was
+   * possible" and "your settings have changed since" are different situations with different
+   * answers, and collapsing them into a disabled button teaches the player nothing.
+   */
+  const resumeBlocker = computed<string | null>(() => {
+    const run = openedRun.value;
+    if (!run) return 'no run is loaded';
+    if (run.complete) return 'this run finished — there is nothing left to price';
+    if (!run.space) {
+      return 'this run was saved before the space was recorded, so there is nothing to continue from — set the same bands and start again, and anything it already priced will be replayed';
+    }
+    if (!currentPlayerId) return 'no player id, so there is no way to check the run is still valid';
+    if (run.fingerprint && run.fingerprint !== fingerprint(currentPlayerId)) {
+      // The unset-plan-start case gets its own sentence because blaming the player for a change
+      // they did not make is worse than saying nothing. With no start set, `planStart` is the moment
+      // the page loaded, so it moves on every reload and the fingerprint moves with it -- the run is
+      // genuinely unresumable, but the cause is a missing setting rather than an edited one.
+      return planStartIsNow.value
+        ? 'no plan start is set, so the plan is timed from the moment this page loaded — which is a different clock from the one this run was priced against. Set a start date and time (or load a backup) and save runs against that'
+        : 'the plan start, TE or schedule has changed since this run, so its durations no longer describe the same problem';
+    }
+    return null;
+  });
+
+  const canResumeOpenedRun = computed(() => resumeBlocker.value === null);
+
+  /**
+   * Continue an unfinished saved run where it stopped.
+   *
+   * The entries are already in `liveCache` from `openSavedRun`; `startExhaustive` replays anything
+   * it finds there whose key is in the space, so this only has to hand back the SAME space the run
+   * was enumerating. Handing back the panel's current form instead would be a different search that
+   * happened to reuse a cache.
+   */
+  async function resumeOpenedRun(playerId: string): Promise<boolean> {
+    const run = openedRun.value;
+    if (!run?.space || !canResumeOpenedRun.value) return false;
+    const sp = run.space;
+    await startExhaustive(playerId, {
+      lo: sp.range?.lo ?? 0,
+      hi: sp.range?.hi ?? 0,
+      step: sp.range?.step ?? 1,
+      minAsc: sp.minAscensions,
+      maxAsc: sp.maxAscensions,
+      minGap: sp.minGap,
+      ...(sp.mode === 'bands' && sp.bands?.length ? { bands: sp.bands.map(b => [...b]) } : {}),
+    });
     return true;
   }
 
@@ -1079,6 +1185,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       await saveCheckpoint(
         partitionHash,
         buildCheckpoint({
+          // So a crash leaves something that can carry on, not just a cache nobody can aim at.
+          space: searchSpace.value,
           fingerprint: runFingerprint,
           effort: effort.value,
           seedChain: seedChain.value,
@@ -1219,8 +1327,32 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     runLog.value.push(`${chains.length.toLocaleString()} chains, no pruning`);
     secondsPerChain.value = 0;
     rateSource.value = null;
+
+    // CARRY FORWARD WHAT IS ALREADY PRICED, rather than starting from an empty cache.
+    //
+    // This line used to be `liveCache = []` unconditionally, and that is what made an unfinished
+    // saved run un-continuable: opening one fills `liveCache` with every chain it managed to price,
+    // and pressing Start threw all of it away and re-simulated from nothing. The checkpoint was the
+    // only thing that ever got replayed, and a checkpoint is one slot per player that any later run
+    // overwrites -- so a run saved deliberately, by name, was the one kind that could not be picked
+    // back up.
+    //
+    // Guarded by the FINGERPRINT, which is the whole reason it is safe. A cached duration only means
+    // anything against the plan start, TE, schedule and shift handling it was measured under, and
+    // every one of those is editable between saving a run and reopening it. Same fingerprint, the
+    // numbers describe the same problem and replaying them is free; different, and they are dropped
+    // rather than quietly mixed into a ranking with chains priced under another clock.
+    const carried = new Map<string, CacheEntry>();
+    const currentFingerprint = fingerprint(playerId);
+    if (!openedRun.value || !openedRun.value.fingerprint || openedRun.value.fingerprint === currentFingerprint) {
+      for (const e of [...liveCache, ...coarseCache]) if (e.seconds > 0) carried.set(e.key, e);
+    }
     liveCache = [];
     coarseCache = [];
+    // Cleared once the carry-forward above has been taken: from here this is a LIVE run, not a
+    // saved one sitting in the panel, and leaving it set would go on offering to resume something
+    // that is already running.
+    openedRun.value = null;
     csvRows.value = 0;
     shortlist.value = [];
     lastShortlistAt = 0;
@@ -1246,10 +1378,13 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     // chain in memory and wrote nothing until the operator pressed Save, so an unattended machine
     // that restarted lost the lot. The staged search has always checkpointed on a timer. This now
     // does the same, and replays what it finds instead of re-simulating it.
-    const alreadyPriced = new Map<string, CacheEntry>();
+    // Seeded from memory first, then topped up from the checkpoint. Order matters only in that the
+    // checkpoint wins a tie, and a tie means the same chain priced under the same inputs twice --
+    // identical numbers either way.
+    const alreadyPriced = new Map<string, CacheEntry>(carried);
     try {
       partitionHash = await hashID(playerId);
-      runFingerprint = fingerprint(playerId);
+      runFingerprint = currentFingerprint;
       const saved = await loadCheckpoint(partitionHash, runFingerprint);
       if (saved) {
         for (const e of restoreEntries(saved)) if (e.seconds > 0) alreadyPriced.set(e.key, e);
@@ -1534,6 +1669,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     // duration its meaning (plan start, excluded hours, final target) may all have changed.
     liveCache = [];
     coarseCache = [];
+    openedRun.value = null;
     csvRows.value = 0;
     shortlist.value = [];
     lastShortlistAt = 0;
@@ -1875,6 +2011,12 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     discardCheckpoint,
     runStartedAt,
     searchSpace,
+    openedRun,
+    crashedRun,
+    resumeCrashedRun,
+    canResumeOpenedRun,
+    resumeBlocker,
+    resumeOpenedRun,
     workerBudget,
     machineThreads,
     legDetailBudget,

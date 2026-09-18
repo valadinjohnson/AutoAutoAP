@@ -19,6 +19,7 @@
  */
 import { loadMetadata, saveMetadata } from '@/lib/storage/db';
 import type { CacheEntry } from './driver';
+import type { SearchSpace } from './submission';
 import { availabilityKey, type Availability } from './availability';
 import { milestonesKey, type Milestone } from './milestones';
 import type { EffortTier, LegSummary } from './types';
@@ -49,6 +50,23 @@ export interface SearchCheckpoint {
    *  replays its cache - but it must not be advertised as an unfinished run to resume. */
   complete: boolean;
   updatedAt: number;
+
+  /**
+   * The space an exhaustive run was enumerating, when it was one.
+   *
+   * ADDED FOR THE CRASH CASE, which is the only case the checkpoint exists for and the one it could
+   * not actually finish. Everything needed to carry on was already here -- every priced duration,
+   * the fingerprint proving they are still valid -- except the one thing nobody can reconstruct
+   * from the outside: WHICH chains the run was working through. So after a crash the cache was
+   * replayable in principle and unreachable in practice, because resuming meant retyping the bands
+   * exactly and any difference started a different search.
+   *
+   * Optional and unversioned on purpose. A record written before this field is still a valid
+   * record; it simply cannot offer to resume itself, which is what it could do before. Bumping
+   * RECORD_VERSION to add it would have deleted the in-flight run of anyone who reloaded mid-search
+   * on the release that introduced it -- the exact accident this field is meant to prevent.
+   */
+  space?: SearchSpace;
 }
 
 /**
@@ -99,14 +117,16 @@ export async function saveCheckpoint(partitionHash: string, record: SearchCheckp
   try {
     const prior = (await loadMetadata(partitionHash, METADATA_KEY)) as SearchCheckpoint | null;
     if (prior && prior.version === RECORD_VERSION && prior.fingerprint === record.fingerprint) {
-      const priorWins =
-        prior.bestSeconds > 0 && (record.bestSeconds <= 0 || prior.bestSeconds < record.bestSeconds);
+      const priorWins = prior.bestSeconds > 0 && (record.bestSeconds <= 0 || prior.bestSeconds < record.bestSeconds);
 
       const durations = new Map<string, number>(prior.durations);
       for (const [key, seconds] of record.durations) durations.set(key, seconds);
 
       merged = {
         ...record,
+        // Kept from whichever record has one. A merge that dropped the space would quietly turn a
+        // resumable checkpoint back into an unresumable one on the next periodic write.
+        ...((record.space ?? prior.space) ? { space: record.space ?? prior.space } : {}),
         bestChain: priorWins ? [...prior.bestChain] : record.bestChain,
         bestSeconds: priorWins ? prior.bestSeconds : record.bestSeconds,
         bestLegs: priorWins ? prior.bestLegs : record.bestLegs,
@@ -146,6 +166,7 @@ export function buildCheckpoint(args: {
   detail: string;
   chainsDone: number;
   complete?: boolean;
+  space?: SearchSpace | null;
 }): SearchCheckpoint {
   const bestKey = args.bestChain.join(',');
   return {
@@ -162,6 +183,7 @@ export function buildCheckpoint(args: {
     chainsDone: args.chainsDone,
     complete: args.complete ?? false,
     updatedAt: Date.now(),
+    ...(args.space ? { space: args.space } : {}),
   };
 }
 

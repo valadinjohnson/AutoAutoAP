@@ -111,3 +111,53 @@ describe('saveCheckpoint', () => {
     expect(await loadCheckpoint(HASH, FP)).not.toBeNull();
   });
 });
+
+describe('the space a checkpoint was searching', () => {
+  beforeEach(() => store.clear());
+
+  const SPACE = {
+    mode: 'bands' as const,
+    bands: [[240, 245, 250]],
+    minGap: 0,
+    minAscensions: 2,
+    maxAscensions: 2,
+    chains: 3,
+    chainsPriced: 1,
+    stoppedEarly: false,
+  };
+
+  const withSpace = (space: typeof SPACE | null, chainsDone = 1, explicitNull = false) =>
+    buildCheckpoint({
+      fingerprint: FP,
+      effort: 'balanced',
+      seedChain: [195, 490],
+      bestChain: [195, 490],
+      bestSeconds: 700 * 86400,
+      entries: [{ key: '195,490', seconds: 700 * 86400, legs: [] }],
+      stage: 'running',
+      detail: '',
+      chainsDone,
+      ...(space === null ? (explicitNull ? { space: null } : {}) : { space }),
+    });
+
+  it('is carried on the record, so a crashed run knows what it was working through', () => {
+    expect(withSpace(SPACE).space?.bands).toEqual([[240, 245, 250]]);
+  });
+
+  // `undefined` and `null` both mean "no space". Neither may leave a present-but-empty key, which
+  // a structuredClone into IndexedDB would keep and `crashedRun` would read as resumable.
+  it('is absent rather than empty when there is none', () => {
+    expect('space' in withSpace(null)).toBe(false);
+    expect('space' in withSpace(null, 1, true)).toBe(false);
+  });
+
+  // The periodic write is a merge against whatever is already on disk. Dropping the space there
+  // would quietly turn a resumable checkpoint back into an unresumable one a few minutes later.
+  it('survives a later write that does not carry one', async () => {
+    await saveCheckpoint(HASH, withSpace(SPACE));
+    await saveCheckpoint(HASH, withSpace(null, 99));
+    const back = await loadCheckpoint(HASH, FP);
+    expect(back?.space?.bands).toEqual([[240, 245, 250]]);
+    expect(back?.chainsDone).toBe(99);
+  });
+});

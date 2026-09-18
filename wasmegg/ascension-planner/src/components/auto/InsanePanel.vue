@@ -53,6 +53,32 @@
       </div>
 
       <!--
+        An interrupted run, found on load. Above everything, because it is time-sensitive in a way
+        nothing else on this page is: starting anything else overwrites the checkpoint it lives in.
+      -->
+      <div
+        v-if="store.crashedRun && !store.isRunning"
+        class="rounded-xl border border-amber-300 bg-amber-50 p-4 space-y-2"
+      >
+        <h3 class="text-[10px] font-black text-amber-800 uppercase tracking-widest">Unfinished run found</h3>
+        <p class="text-[11px] text-amber-900/90 leading-relaxed">
+          A run on this machine stopped without finishing —
+          <span class="font-bold">{{ (store.crashedRun.durations?.length ?? 0).toLocaleString() }}</span> chains are
+          already priced and will be replayed rather than re-simulated. It was last written
+          {{ agoLabel(store.crashedRun.updatedAt) }}.
+          <span class="font-bold">Starting a different search overwrites it.</span>
+        </p>
+        <button
+          type="button"
+          :disabled="store.isRunning || resuming !== ''"
+          class="px-4 py-2 rounded-lg bg-amber-700 text-white text-[10px] font-black uppercase tracking-widest hover:bg-amber-800 disabled:opacity-40"
+          @click="resumeCrashed"
+        >
+          Carry on from where it stopped
+        </button>
+      </div>
+
+      <!--
         When the plan runs, and around what. Bound to the SAME store fields the Auto Planner and
         Chain Search write, so this is one setting shown in a second place rather than a second
         setting -- change it here and the main panels agree, and vice versa.
@@ -66,12 +92,24 @@
       <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
         <button
           type="button"
-          class="w-full flex items-center justify-between gap-3 text-left"
+          class="w-full flex items-center gap-2 text-left group"
           :aria-expanded="showSchedule"
           @click="showSchedule = !showSchedule"
         >
+          <svg
+            class="w-3 h-3 flex-shrink-0 text-slate-400 group-hover:text-slate-600"
+            viewBox="0 0 12 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path :d="showSchedule ? CHEVRON_DOWN : CHEVRON_RIGHT" />
+          </svg>
           <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">When the plan runs</h3>
-          <span class="text-[10px] font-bold text-slate-400">{{ scheduleSummary }} {{ showSchedule ? '⌄' : '›' }}</span>
+          <span class="ml-auto text-[10px] font-bold text-slate-400">{{ scheduleSummary }}</span>
         </button>
 
         <div v-if="showSchedule" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -206,12 +244,24 @@
         <div class="flex flex-wrap items-center justify-between gap-3">
           <button
             type="button"
-            class="flex items-center gap-2 text-left"
+            class="flex items-center gap-2 text-left group"
             :aria-expanded="showMachine"
             @click="showMachine = !showMachine"
           >
+            <svg
+              class="w-3 h-3 flex-shrink-0 text-slate-400 group-hover:text-slate-600"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path :d="showMachine ? CHEVRON_DOWN : CHEVRON_RIGHT" />
+            </svg>
             <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">This machine</h3>
-            <span class="text-[10px] font-bold text-slate-400">{{ machineSummary }} {{ showMachine ? '⌄' : '›' }}</span>
+            <span class="text-[10px] font-bold text-slate-400">{{ machineSummary }}</span>
           </button>
           <div class="flex flex-wrap gap-1">
             <button
@@ -654,13 +704,28 @@
       </div>
 
       <!-- The question everyone asks before committing a machine for an afternoon. -->
-      <details class="rounded-xl border border-slate-200 bg-white overflow-hidden">
-        <summary
-          class="px-4 py-3 cursor-pointer text-[10px] font-black text-slate-600 uppercase tracking-widest hover:bg-slate-50"
+      <div class="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        <button
+          type="button"
+          class="w-full px-4 py-3 flex items-center gap-2 text-left group hover:bg-slate-50"
+          :aria-expanded="showSplit"
+          @click="showSplit = !showSplit"
         >
-          How the work is split
-        </summary>
-        <div class="px-4 pb-4 space-y-3 text-[11px] text-slate-600 leading-relaxed">
+          <svg
+            class="w-3 h-3 flex-shrink-0 text-slate-400 group-hover:text-slate-600"
+            viewBox="0 0 12 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path :d="showSplit ? CHEVRON_DOWN : CHEVRON_RIGHT" />
+          </svg>
+          <h3 class="text-[10px] font-black text-slate-600 uppercase tracking-widest">How the work is split</h3>
+        </button>
+        <div v-if="showSplit" class="px-4 pb-4 space-y-3 text-[11px] text-slate-600 leading-relaxed">
           <p>
             <span class="font-bold text-slate-800">Chains are sorted so relatives sit together.</span> Every chain
             starting <code class="font-mono-premium">195 229</code> is adjacent to every other one, because the
@@ -691,14 +756,10 @@
             priced so far stays, and the best of it is your answer.
           </p>
         </div>
-      </details>
+      </div>
 
       <label class="flex items-start gap-3 cursor-pointer">
-        <input
-          v-model="store.keepAwake"
-          type="checkbox"
-          class="mt-0.5 rounded border-slate-300 text-indigo-600"
-        />
+        <input v-model="store.keepAwake" type="checkbox" class="mt-0.5 rounded border-slate-300 text-indigo-600" />
         <span class="text-[11px] text-slate-600 leading-relaxed">
           <span class="font-bold text-slate-800">Keep my PC awake.</span> A run is hours long; if the machine sleeps,
           every worker freezes until you wake it back up. Turn this off if you'd rather manage sleep yourself.
@@ -790,6 +851,8 @@
           </button>
         </div>
 
+        <p v-if="resumeNote" class="text-[11px] font-semibold text-amber-700 leading-relaxed">{{ resumeNote }}</p>
+
         <p v-if="!store.savedRuns.length" class="text-[11px] text-slate-400">Nothing saved yet.</p>
         <div v-else class="divide-y divide-slate-100">
           <div v-for="run in store.savedRuns" :key="run.id" class="flex flex-wrap items-center gap-3 py-2">
@@ -799,10 +862,23 @@
                 {{ run.bestChain.join(' ') }} · {{ run.bestDays.toFixed(3) }} d · {{ run.chainsPriced }} chains<template
                   v-if="!run.complete"
                 >
-                  · stopped early</template
+                  · stopped early at {{ run.chainsPriced.toLocaleString() }} of
+                  {{ (run.space?.chains ?? 0).toLocaleString() }}</template
                 >
               </div>
             </div>
+            <!-- Resume, not just Open. An unfinished run holds every chain it managed to price, and
+                 without this the only way to use it was to retype the space and let the search
+                 rediscover them -- which is exactly the afternoon this is meant to give back. -->
+            <button
+              v-if="!run.complete && run.space"
+              type="button"
+              :disabled="store.isRunning || resuming !== ''"
+              class="px-3 py-1.5 rounded-md bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-40"
+              @click="resume(run.id)"
+            >
+              {{ resuming === run.id ? 'Resuming…' : 'Resume' }}
+            </button>
             <button
               type="button"
               class="px-3 py-1.5 rounded-md border border-slate-300 text-[10px] font-black uppercase tracking-widest text-slate-600 hover:border-emerald-300 hover:text-emerald-700"
@@ -1104,6 +1180,20 @@ function applyProfile(id: ProfileId): void {
  */
 const showSchedule = ref(false);
 const showMachine = ref(false);
+const showSplit = ref(false);
+
+/**
+ * The two states of every disclosure on this panel, as path data rather than a rotation.
+ *
+ * Rotating one chevron with a CSS transform is the obvious way to do this and it does not work
+ * here: measured in the running app, `rotate-90` lands on the element with `--tw-rotate: 90deg`
+ * set, and the rendered path keeps its 4x8 bounding box either way -- transform is simply not
+ * applied to these SVGs. An inline `style.transform` was ignored too, so it is not Tailwind.
+ * Swapping the geometry cannot be ignored by anything, and two distinct glyphs read more clearly
+ * than one glyph at two angles.
+ */
+const CHEVRON_RIGHT = 'M4 2l4 4-4 4';
+const CHEVRON_DOWN = 'M2 4l4 4 4-4';
 
 const scheduleSummary = computed(() => {
   const when = store.planStartIsNow ? 'no start set' : `from ${autoPlannerStore.startDate}`;
@@ -1322,6 +1412,9 @@ watch(
 
 onMounted(() => {
   void store.refreshSavedRuns(props.playerId);
+  // Look for an interrupted run. Nothing else on this panel did, so a checkpoint written by a run
+  // the browser killed sat there unread until somebody happened to set up the identical space.
+  void store.checkResumable(props.playerId);
   // A rate measured in an earlier session beats the 15 s assumption on a fresh page load, whether it
   // came from a benchmark or from a real run that finished a chunk.
   store.restoreBenchmark(props.playerId);
@@ -1394,6 +1487,45 @@ async function save(): Promise<void> {
 
 async function open(id: string): Promise<void> {
   await store.openSavedRun(props.playerId, id);
+  resumeNote.value = store.openedRun && !store.canResumeOpenedRun ? `Cannot resume: ${store.resumeBlocker}.` : '';
+}
+
+async function resumeCrashed(): Promise<void> {
+  resuming.value = 'checkpoint';
+  try {
+    await store.resumeCrashedRun(props.playerId);
+  } finally {
+    resuming.value = '';
+  }
+}
+
+/** Which run is mid-resume, for the button's own label. Empty when none is. */
+const resuming = ref('');
+const resumeNote = ref('');
+
+/**
+ * Load a saved run and carry straight on from where it stopped.
+ *
+ * Opening first is not a convenience -- it is what puts the run's priced chains into the store's
+ * cache, which is the thing `startExhaustive` carries forward. Resuming without it would start the
+ * right space against an empty cache and re-price everything.
+ */
+async function resume(id: string): Promise<void> {
+  resuming.value = id;
+  resumeNote.value = '';
+  try {
+    if (!(await store.openSavedRun(props.playerId, id))) {
+      resumeNote.value = 'That run could not be opened.';
+      return;
+    }
+    if (!store.canResumeOpenedRun) {
+      resumeNote.value = `Cannot resume: ${store.resumeBlocker}.`;
+      return;
+    }
+    await store.resumeOpenedRun(props.playerId);
+  } finally {
+    resuming.value = '';
+  }
 }
 
 async function remove(id: string): Promise<void> {

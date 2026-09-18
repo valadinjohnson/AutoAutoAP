@@ -109,13 +109,57 @@ describe('runLibrary', () => {
     await expect(deleteRun(P, 'nope')).resolves.toBeUndefined();
   });
 
-  it('hides entries written by an older version rather than reloading them', async () => {
+  it('hides entries written by a version it does not know rather than reloading them', async () => {
     await saveRun(P, input({ id: 'r1' }));
     const key = `${P}_chainSearchLibraryIndex`;
     const index = store.get(key) as { version: number }[];
-    index[0].version = LIBRARY_VERSION - 1;
+    index[0].version = LIBRARY_VERSION + 1;
     store.set(key, index);
     expect(await listRuns(P)).toEqual([]);
+  });
+
+  // Version 2 only ADDS `space` and `fingerprint`. A version 1 run's entries are identical, so
+  // dropping it would have thrown away a library for no reason -- and the symptom would have been
+  // an empty list, indistinguishable from never having saved anything.
+  it('still lists and opens a version 1 run, which differs only by fields it never had', async () => {
+    await saveRun(P, input({ id: 'r1' }));
+    const indexKey = `${P}_chainSearchLibraryIndex`;
+    const bodyKey = `${P}_chainSearchLibraryRun:r1`;
+    const index = store.get(indexKey) as { version: number }[];
+    index[0].version = 1;
+    store.set(indexKey, index);
+    const body = store.get(bodyKey) as { version: number };
+    body.version = 1;
+    store.set(bodyKey, body);
+
+    expect((await listRuns(P)).map(r => r.id)).toEqual(['r1']);
+    expect((await loadRun(P, 'r1'))?.entries).toHaveLength(2);
+  });
+
+  it('records the space and fingerprint, so an unfinished run can be picked back up', async () => {
+    const space = {
+      mode: 'bands' as const,
+      bands: [[240, 245]],
+      minGap: 0,
+      minAscensions: 2,
+      maxAscensions: 2,
+      chains: 2,
+      chainsPriced: 1,
+      stoppedEarly: true,
+    };
+    const s = await saveRun(P, input({ id: 'r1', complete: false, space, fingerprint: 'fp-abc' }));
+    expect(s.space).toEqual(space);
+    expect(s.fingerprint).toBe('fp-abc');
+    expect((await listRuns(P))[0].space?.bands).toEqual([[240, 245]]);
+  });
+
+  // `undefined` survives a structuredClone into IndexedDB as a present key, and a present-but-empty
+  // space would make a staged run look like an exhaustive one with nothing in it.
+  it('leaves the keys off entirely when there is no space to record', async () => {
+    await saveRun(P, input({ id: 'r1' }));
+    const summary = (await listRuns(P))[0];
+    expect('space' in summary).toBe(false);
+    expect('fingerprint' in summary).toBe(false);
   });
 
   it('falls back to a name rather than saving an untitled blank', async () => {
