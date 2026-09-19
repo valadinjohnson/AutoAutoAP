@@ -53,6 +53,85 @@
       </div>
 
       <!--
+        WHAT THIS RUN IS ABOUT TO SIMULATE, above the form and open by default.
+        
+        A search has no opinion about whether its inputs make sense: an empty inventory prices every
+        chain consistently against a farm nobody owns and returns a confident answer three times too
+        slow. Hours later the only clue is a number that looks wrong. This is the cheapest possible
+        fix -- print what was loaded, before the button.
+      -->
+      <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+        <button
+          type="button"
+          class="w-full flex items-center gap-2 text-left group"
+          :aria-expanded="showSetup"
+          @click="showSetup = !showSetup"
+        >
+          <svg
+            class="w-3 h-3 flex-shrink-0 text-slate-400 group-hover:text-slate-600"
+            viewBox="0 0 12 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path :d="showSetup ? CHEVRON_DOWN : CHEVRON_RIGHT" />
+          </svg>
+          <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">What it will simulate</h3>
+          <span
+            class="ml-auto text-[10px] font-bold"
+            :class="store.setupIssues.length ? 'text-rose-700' : 'text-emerald-700'"
+          >
+            {{ setupSummary }}
+          </span>
+        </button>
+
+        <!-- Shown whether or not the card is expanded. A problem that only appears once you go
+             looking is a problem nobody finds. -->
+        <p
+          v-for="(issue, k) in store.setupIssues"
+          :key="k"
+          class="text-[11px] font-semibold leading-relaxed"
+          :class="issue.level === 'error' ? 'text-rose-700' : 'text-amber-700'"
+        >
+          {{ issue.level === 'error' ? '✕' : '!' }} {{ issue.message }}
+        </p>
+
+        <div v-if="showSetup" class="grid gap-4 sm:grid-cols-2 text-[11px]">
+          <div>
+            <h4 class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Delivery set (leg 1)</h4>
+            <div v-if="!setup.delivery.length" class="text-rose-700 font-semibold">none solved</div>
+            <div v-for="(slot, k) in setup.delivery" :key="k" class="text-slate-600">
+              <span class="font-bold text-slate-700">{{ slot.artifact }}</span>
+              <span v-if="slot.stones?.length" class="text-slate-500"> · {{ slot.stones.join(', ') }}</span>
+            </div>
+            <p class="text-[10px] text-slate-400 mt-1">
+              Later legs re-solve against their own research, so this is leg 1's set, not the whole run's.
+            </p>
+          </div>
+          <div>
+            <h4 class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Earnings set</h4>
+            <div v-if="!setup.earnings.length" class="text-amber-700 font-semibold">none solved</div>
+            <div v-for="(slot, k) in setup.earnings" :key="k" class="text-slate-600">
+              <span class="font-bold text-slate-700">{{ slot.artifact }}</span>
+              <span v-if="slot.stones?.length" class="text-slate-500"> · {{ slot.stones.join(', ') }}</span>
+            </div>
+          </div>
+          <div class="sm:col-span-2">
+            <h4 class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Inventory it chose from</h4>
+            <div class="text-slate-600">
+              {{ setup.artifacts.length }} virtue artifacts · {{ setup.stones.reduce((n, x) => n + x.count, 0) }} stones
+            </div>
+            <div class="text-[10px] text-slate-400 font-mono-premium mt-0.5">
+              {{ setup.artifacts.map(a => a.label).join(', ') || 'nothing' }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!--
         An interrupted run, found on load. Above everything, because it is time-sensitive in a way
         nothing else on this page is: starting anything else overwrites the checkpoint it lives in.
       -->
@@ -818,6 +897,20 @@
           Compare runs on the finish date. Two runs started hours apart have different plan starts, so their day counts
           are not measuring the same thing; the date they land on is.
         </p>
+        <!-- The result-side half of the same idea. Delivery cannot fall as TE rises; when it does,
+             the state carried into that leg is wrong and every duration after it is too. Shown on
+             the winning chain because that is the number people copy. -->
+        <div v-if="store.resultIssues.length" class="mt-2 rounded-lg border border-rose-300 bg-rose-50 p-3 space-y-1">
+          <p class="text-[10px] font-black text-rose-800 uppercase tracking-widest">This result contradicts itself</p>
+          <p v-for="(issue, k) in store.resultIssues" :key="k" class="text-[11px] text-rose-900/90 leading-relaxed">
+            {{ issue.message }}
+          </p>
+          <p class="text-[11px] text-rose-900/80 leading-relaxed">
+            Reload your backup and run it again before trusting these dates, and compare leg 1 against the official
+            planner — if leg 1 agrees and a later leg does not, the fault is in the state carried between legs.
+          </p>
+        </div>
+
         <p v-if="store.stoppedEarly" class="text-[11px] text-emerald-900/70 pt-1">
           You stopped it early, so this is the best of what was priced, not the optimum of the space.
         </p>
@@ -1027,6 +1120,7 @@ import { MAX_RUNS } from '@/search/runLibrary';
 import SearchShapeChart from './charts/SearchShapeChart.vue';
 import HelpTip from './HelpTip.vue';
 import { downloadParts } from '@/utils/export';
+import { describeLoadoutSlots } from '@/search/csv';
 
 /**
  * `exportCsvChunks()` yields the text and hands it back; it does not save anything. This panel used
@@ -1181,6 +1275,26 @@ function applyProfile(id: ProfileId): void {
 const showSchedule = ref(false);
 const showMachine = ref(false);
 const showSplit = ref(false);
+const showSetup = ref(true);
+
+/** The loadout the run will actually use, read through the store so it is the same call the CSV
+ *  header and the submission make rather than a second derivation that can drift from them. */
+const setup = computed(() => {
+  const inv = store.readInventory();
+  return {
+    artifacts: inv.artifacts,
+    stones: inv.stones,
+    delivery: describeLoadoutSlots(inv.elr),
+    earnings: describeLoadoutSlots(inv.earnings),
+  };
+});
+
+const setupSummary = computed(() => {
+  const errors = store.setupIssues.filter(i => i.level === 'error').length;
+  if (errors) return `${errors} problem${errors > 1 ? 's' : ''}`;
+  if (store.setupIssues.length) return `${store.setupIssues.length} to check`;
+  return `${setup.value.artifacts.length} artifacts loaded`;
+});
 
 /**
  * The two states of every disclosure on this panel, as path data rather than a rotation.

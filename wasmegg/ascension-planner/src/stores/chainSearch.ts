@@ -58,6 +58,7 @@ import { defaultSeedChain, seedChainIssue, usableCheckpoints, fitSeedToLimits } 
 import { buildPool, exhaustiveChainsWithGap, bandedChains, sortByPrefix } from '@/search/exhaustive';
 import { applyLegBudget, estimateLegBytes } from '@/search/legBudget';
 import { summariseEpicResearch, summariseColleggtibles } from '@/search/progression';
+import { reviewLegs, reviewSetup, type HealthIssue } from '@/search/health';
 import { listRuns, saveRun, loadRun, deleteRun, defaultRunLabel, type RunSummary } from '@/search/runLibrary';
 import { epicResearchDefs } from '@/lib/epicResearch';
 import { getColleggtibleTiers } from 'lib/collegtibles';
@@ -941,6 +942,30 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
 
     return { artifacts, stones, earnings: getOptimalEarningsSet(raw), elr, equippedNow };
   }
+
+  /**
+   * What this run will be given, checked before hours are spent on it.
+   *
+   * Reads the SAME `readInventory()` the submission and the CSV header use, so what the panel shows
+   * before a run is literally what the run gets -- not a second, plausible-looking derivation that
+   * can agree with the real one right up until the day it does not.
+   */
+  const setupIssues = computed<HealthIssue[]>(() => {
+    if (!getSimulationContext().rawBackup) {
+      return reviewSetup({ hasBackup: false, artifacts: [], stones: [], delivery: [], earnings: [] });
+    }
+    const inv = readInventory();
+    return reviewSetup({
+      hasBackup: true,
+      artifacts: inv.artifacts,
+      stones: inv.stones,
+      delivery: describeLoadoutSlots(inv.elr),
+      earnings: describeLoadoutSlots(inv.earnings),
+    });
+  });
+
+  /** The same review applied to the winning chain's legs, once there is one. */
+  const resultIssues = computed<HealthIssue[]>(() => (bestLegs.value.length ? reviewLegs(bestLegs.value) : []));
 
   /**
    * Build the shareable summary of this run.
@@ -2011,6 +2036,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     discardCheckpoint,
     runStartedAt,
     searchSpace,
+    setupIssues,
+    resultIssues,
     openedRun,
     crashedRun,
     resumeCrashedRun,
