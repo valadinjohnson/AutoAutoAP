@@ -99,35 +99,56 @@
           {{ issue.level === 'error' ? '✕' : '!' }} {{ issue.message }}
         </p>
 
-        <div v-if="showSetup" class="grid gap-4 sm:grid-cols-2 text-[11px]">
-          <div>
-            <h4 class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Delivery set (leg 1)</h4>
-            <div v-if="!setup.delivery.length" class="text-rose-700 font-semibold">none solved</div>
-            <div v-for="(slot, k) in setup.delivery" :key="k" class="text-slate-600">
-              <span class="font-bold text-slate-700">{{ slot.artifact }}</span>
-              <span v-if="slot.stones?.length" class="text-slate-500"> · {{ slot.stones.join(', ') }}</span>
+        <div v-if="showSetup" class="space-y-4">
+          <!-- The same LoadoutDisplay the main panel uses, rather than a second rendering of the
+               same idea in text. If the two cards are showing the same thing they should look like
+               the same thing. -->
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div>
+              <h4 class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1.5">
+                Delivery set (leg 1)
+              </h4>
+              <LoadoutDisplay :loadout="setup.elr" />
+              <p class="text-[10px] text-slate-400 mt-1">
+                Later legs re-solve against their own research, so this is leg 1's set, not the whole run's.
+              </p>
             </div>
-            <p class="text-[10px] text-slate-400 mt-1">
-              Later legs re-solve against their own research, so this is leg 1's set, not the whole run's.
-            </p>
-          </div>
-          <div>
-            <h4 class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Earnings set</h4>
-            <div v-if="!setup.earnings.length" class="text-amber-700 font-semibold">none solved</div>
-            <div v-for="(slot, k) in setup.earnings" :key="k" class="text-slate-600">
-              <span class="font-bold text-slate-700">{{ slot.artifact }}</span>
-              <span v-if="slot.stones?.length" class="text-slate-500"> · {{ slot.stones.join(', ') }}</span>
-            </div>
-          </div>
-          <div class="sm:col-span-2">
-            <h4 class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Inventory it chose from</h4>
-            <div class="text-slate-600">
-              {{ setup.artifacts.length }} virtue artifacts · {{ setup.stones.reduce((n, x) => n + x.count, 0) }} stones
-            </div>
-            <div class="text-[10px] text-slate-400 font-mono-premium mt-0.5">
-              {{ setup.artifacts.map(a => a.label).join(', ') || 'nothing' }}
+            <div>
+              <h4 class="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Earnings set</h4>
+              <LoadoutDisplay :loadout="setup.earnings" />
             </div>
           </div>
+
+          <!-- The economic half of the state, which is what the reported bad load appeared to lose:
+               leg 1 continued an already-built farm and was right, and every later leg had to fund
+               its own research out of earnings and could not. -->
+          <dl class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px] border-t border-slate-100 pt-3">
+            <div>
+              <dt class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Soul eggs</dt>
+              <dd class="font-bold" :class="store.setupFacts.soulEggs > 0 ? 'text-slate-700' : 'text-rose-700'">
+                {{ formatSoulEggs(store.setupFacts.soulEggs) }}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Your TE now</dt>
+              <dd class="font-bold text-slate-700">{{ store.setupFacts.currentTE }}</dd>
+            </div>
+            <div>
+              <dt class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Epic research</dt>
+              <dd class="font-bold text-slate-700">
+                {{ store.setupFacts.epicAtMax }} / {{ store.setupFacts.epicTotal }} maxed
+              </dd>
+            </div>
+            <div>
+              <dt class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Colleggtibles</dt>
+              <dd class="font-bold text-slate-700">{{ store.setupFacts.colleggtibles }}</dd>
+            </div>
+          </dl>
+          <p class="text-[11px] text-slate-500 leading-relaxed">
+            {{ setup.artifacts.length }} virtue artifacts and {{ setup.stones.reduce((n, x) => n + x.count, 0) }} stones
+            were available to choose from. If any of these read as empty or obviously stale, reload your backup before
+            starting — a half-loaded save prices every chain against a farm you do not have, and says nothing about it.
+          </p>
         </div>
       </div>
 
@@ -1120,7 +1141,7 @@ import { MAX_RUNS } from '@/search/runLibrary';
 import SearchShapeChart from './charts/SearchShapeChart.vue';
 import HelpTip from './HelpTip.vue';
 import { downloadParts } from '@/utils/export';
-import { describeLoadoutSlots } from '@/search/csv';
+import LoadoutDisplay from './LoadoutDisplay.vue';
 
 /**
  * `exportCsvChunks()` yields the text and hands it back; it does not save anything. This panel used
@@ -1275,7 +1296,7 @@ function applyProfile(id: ProfileId): void {
 const showSchedule = ref(false);
 const showMachine = ref(false);
 const showSplit = ref(false);
-const showSetup = ref(true);
+const showSetup = ref(false);
 
 /** The loadout the run will actually use, read through the store so it is the same call the CSV
  *  header and the submission make rather than a second derivation that can drift from them. */
@@ -1284,10 +1305,21 @@ const setup = computed(() => {
   return {
     artifacts: inv.artifacts,
     stones: inv.stones,
-    delivery: describeLoadoutSlots(inv.elr),
-    earnings: describeLoadoutSlots(inv.earnings),
+    // The solved sets as LoadoutDisplay wants them. The word form the health check needs is built
+    // in the store, against the same readInventory() call, rather than a second time here.
+    elr: inv.elr,
+    earnings: inv.earnings,
   };
 });
+
+/** Soul eggs run to 1e21 and beyond, so the raw number is unreadable and `toLocaleString` is
+ *  worse. Same short-scale suffixes the rest of the app uses. */
+function formatSoulEggs(n: number): string {
+  if (!(n > 0)) return 'none — the farm cannot buy anything';
+  const units = ['', 'K', 'M', 'B', 'T', 'q', 'Q', 's', 'S', 'o', 'N', 'd', 'U'];
+  const tier = Math.min(units.length - 1, Math.floor(Math.log10(n) / 3));
+  return `${(n / 10 ** (tier * 3)).toFixed(2)}${units[tier]}`;
+}
 
 const setupSummary = computed(() => {
   const errors = store.setupIssues.filter(i => i.level === 'error').length;

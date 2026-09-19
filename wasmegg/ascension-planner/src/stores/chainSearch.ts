@@ -964,6 +964,37 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     });
   });
 
+  /**
+   * The economic inputs, for the panel to print next to the loadout.
+   *
+   * WHY THESE AND NOT MORE. The reported failure looked like the farm "could not buy things": leg 1
+   * continued an already-built farm and was exactly right, while every later leg -- which has to
+   * fund its own research and habs out of earnings -- came back at a fraction of the rate and never
+   * unlocked tier 13. The same account's OFFICIAL planner showed the same wrong number until it was
+   * refreshed, which puts the fault in the loaded state rather than in this search. These are the
+   * numbers that state is made of, so showing them is how a bad load becomes visible before a run
+   * instead of after one.
+   */
+  const setupFacts = computed(() => {
+    const initialStateStore = useInitialStateStore();
+    const raw = initialStateStore.rawBackup;
+    const epic = summariseEpicResearch(
+      epicResearchDefs.map(d => ({
+        id: d.id,
+        name: d.name,
+        level: initialStateStore.epicResearchLevels[d.id] ?? 0,
+        maxLevel: d.maxLevel,
+      }))
+    );
+    return {
+      soulEggs: initialStateStore.soulEggs,
+      epicAtMax: epic?.atMax ?? 0,
+      epicTotal: epic?.total ?? 0,
+      colleggtibles: raw ? (summariseColleggtibles(getColleggtibleTiers(raw))?.total ?? 0) : 0,
+      currentTE: currentTE.value,
+    };
+  });
+
   /** The same review applied to the winning chain's legs, once there is one. */
   const resultIssues = computed<HealthIssue[]>(() => (bestLegs.value.length ? reviewLegs(bestLegs.value) : []));
 
@@ -2037,6 +2068,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     runStartedAt,
     searchSpace,
     setupIssues,
+    setupFacts,
     resultIssues,
     openedRun,
     crashedRun,

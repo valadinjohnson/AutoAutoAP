@@ -35,9 +35,10 @@ export const qph = (leg: LegSummary): number => (leg.maxELR * 3600) / 1e15;
 /**
  * A leg slower than this is not necessarily wrong, but it is worth a second look.
  *
- * Chosen from the shape of a real plan rather than from a distribution: a whole ascension to the
- * final target can legitimately run a few hundred days, so this is set well past that. The leg that
- * prompted it was 817.
+ * NOT APPLIED TO THE FINAL LEG, which is the one leg that is legitimately long: it carries the
+ * plan from its last checkpoint all the way to the target, often several hundred days, and
+ * flagging it every single time is how a warning becomes wallpaper. The reported failure was leg 2
+ * of six at 817 days, which is the shape worth catching -- an early leg that should be short.
  */
 export const SLOW_LEG_DAYS = 400;
 
@@ -64,7 +65,8 @@ export function reviewLegs(legs: LegSummary[]): HealthIssue[] {
   const issues: HealthIssue[] = [];
   legs.forEach((leg, i) => {
     const days = leg.durationSeconds / 86400;
-    if (days > SLOW_LEG_DAYS) {
+    const isFinalLeg = i === legs.length - 1;
+    if (!isFinalLeg && days > SLOW_LEG_DAYS) {
       issues.push({
         kind: 'slow-leg',
         level: 'warning',

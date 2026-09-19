@@ -20,7 +20,8 @@ describe('reviewLegs', () => {
   // The case this module was written for: a real run where leg 1 matched the official planner to
   // three decimals and leg 2 came back at a tenth of it, for 817 days, with no warning anywhere.
   it('catches the collapse that made a 736-day plan read as 2,277', () => {
-    const issues = reviewLegs([leg(195, 3.574, 34.8), leg(212, 0.32, 817.6)]);
+    // The real chain, so leg 2 is an early leg and gets both checks.
+    const issues = reviewLegs([leg(195, 3.574, 34.8), leg(212, 0.32, 817.6), leg(490, 6.814, 684.7)]);
     expect(issues.map(i => i.kind).sort()).toEqual(['rate-collapse', 'slow-leg']);
     expect(issues.find(i => i.kind === 'rate-collapse')!.level).toBe('error');
     expect(issues.find(i => i.kind === 'rate-collapse')!.message).toContain('0.320 q/hr');
@@ -32,9 +33,17 @@ describe('reviewLegs', () => {
     expect(reviewLegs([leg(195, 4), leg(212, 4 * COLLAPSE_RATIO + 0.01)])).toEqual([]);
   });
 
-  it('flags a leg long enough to be worth checking', () => {
-    const issues = reviewLegs([leg(195, 3), leg(212, 3, SLOW_LEG_DAYS + 1)]);
+  it('flags an early leg long enough to be worth checking', () => {
+    const issues = reviewLegs([leg(195, 3), leg(212, 3, SLOW_LEG_DAYS + 1), leg(490, 3)]);
     expect(issues.map(i => i.kind)).toEqual(['slow-leg']);
+    expect(issues[0].message).toContain('Leg 2');
+  });
+
+  // The last leg runs from its checkpoint all the way to the target and is often several hundred
+  // days. Flagging it on every single run is how a warning turns into wallpaper.
+  it('never flags the final leg for being long, which is its job', () => {
+    expect(reviewLegs([leg(195, 3), leg(490, 3, SLOW_LEG_DAYS * 3)])).toEqual([]);
+    expect(reviewLegs([leg(490, 3, SLOW_LEG_DAYS * 3)])).toEqual([]);
   });
 
   it('never judges the first leg against nothing', () => {
