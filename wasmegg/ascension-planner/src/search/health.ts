@@ -28,12 +28,66 @@ export interface HealthIssue {
     | 'no-artifacts'
     | 'no-delivery-set'
     | 'no-earnings-set'
+    | 'no-farm-state'
+    | 'no-epic-research'
     | 'te-mismatch'
     | 'rate-collapse'
     | 'slow-leg';
   /** `error` means the numbers are probably wrong. `warning` means look before you trust them. */
   level: 'error' | 'warning';
   message: string;
+}
+
+/**
+ * Is the state the workers are about to be initialised with actually complete?
+ *
+ * SEPARATE FROM `reviewSetup`, AND THE DIFFERENCE IS THE WHOLE POINT. `reviewSetup` reads the
+ * stores when the panel renders; this reads the object literally handed to the worker pool at the
+ * moment a run starts. They are normally the same thing. They are not the same thing when a backup
+ * is still loading, which is exactly when this goes wrong -- reported as "I clicked around quickly
+ * and it broke", and consistent with every symptom:
+ *
+ *   - leg 1 is correct, because `continue` runs on `currentFarmState`, which loads early;
+ *   - every later leg collapses to the same 0.320 q/hr and never unlocks tier 13, which is what a
+ *     farm with NO EPIC RESEARCH looks like;
+ *   - the CSV header and the pre-flight both look perfect, because both re-read the stores later,
+ *     after loading has finished.
+ *
+ * So the diagnostics could not see it: they were reading a different, later, correct copy of the
+ * state than the one the run was using.
+ */
+export function reviewContext(ctx: {
+  hasBackup: boolean;
+  epicResearchCount: number;
+  hasFarmState: boolean;
+}): HealthIssue[] {
+  const issues: HealthIssue[] = [];
+  if (!ctx.hasBackup) {
+    issues.push({
+      kind: 'no-backup',
+      level: 'error',
+      message: 'The backup had not finished loading when this run tried to start. Wait for it and start again.',
+    });
+    return issues;
+  }
+  if (!ctx.hasFarmState) {
+    issues.push({
+      kind: 'no-farm-state',
+      level: 'error',
+      message: 'The current farm had not finished loading when this run tried to start. Wait for it and start again.',
+    });
+  }
+  // Zero is the tell. A real account has levels here even if none are maxed, and an empty map makes
+  // every leg after the first simulate a farm with no epic research at all.
+  if (ctx.epicResearchCount === 0) {
+    issues.push({
+      kind: 'no-epic-research',
+      level: 'error',
+      message:
+        'No epic research had loaded when this run tried to start. Every ascension after the first would be simulated without it, which collapses their delivery rate and is the single biggest cause of a plan coming back two or three times too long.',
+    });
+  }
+  return issues;
 }
 
 /** Peak delivery in q/hr, the unit the panel and the CSV both print. */

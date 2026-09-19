@@ -58,7 +58,7 @@ import { defaultSeedChain, seedChainIssue, usableCheckpoints, fitSeedToLimits } 
 import { buildPool, exhaustiveChainsWithGap, bandedChains, sortByPrefix } from '@/search/exhaustive';
 import { applyLegBudget, estimateLegBytes } from '@/search/legBudget';
 import { summariseEpicResearch, summariseColleggtibles } from '@/search/progression';
-import { reviewLegs, reviewSetup, type HealthIssue } from '@/search/health';
+import { reviewContext, reviewLegs, reviewSetup, type HealthIssue } from '@/search/health';
 import { listRuns, saveRun, loadRun, deleteRun, defaultRunLabel, type RunSummary } from '@/search/runLibrary';
 import { epicResearchDefs } from '@/lib/epicResearch';
 import { getColleggtibleTiers } from 'lib/collegtibles';
@@ -774,6 +774,21 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
   }
 
   /** Build the payload every worker is initialised with. Everything Pinia here, nothing beyond. */
+  /**
+   * Check the inputs a run is about to be initialised with, not the stores it could read later.
+   *
+   * Called with the object that actually goes to the workers. See `reviewContext`: when a backup is
+   * still loading, this is the only place the incompleteness is visible -- every other diagnostic
+   * re-reads the stores afterwards and sees a correct copy.
+   */
+  function reviewRunInputs(inputs: SearchInputs): HealthIssue[] {
+    return reviewContext({
+      hasBackup: !!inputs.context.rawBackup,
+      hasFarmState: !!inputs.currentFarmState,
+      epicResearchCount: Object.keys(inputs.context.epicResearchLevels ?? {}).length,
+    });
+  }
+
   function collectInputs(): SearchInputs {
     const initialStateStore = useInitialStateStore();
     return {
@@ -1482,11 +1497,23 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       refreshShortlist(true);
     }
 
+    // REFUSE rather than warn. A run started against a half-loaded save produces a complete,
+    // confident, wrong answer after hours of CPU, and the operator cannot tell from the result --
+    // which is how this was found in the first place, from a CSV rather than from the app.
+    const startInputs = collectInputs();
+    const blocking = reviewRunInputs(startInputs);
+    if (blocking.length) {
+      error.value = blocking[0].message;
+      isRunning.value = false;
+      stage.value = 'idle';
+      return;
+    }
+
     holdRunLock();
     void holdScreenLock();
     document.addEventListener('visibilitychange', onVisibilityChange);
     try {
-      pool = await createChainSearchPool(collectInputs(), {
+      pool = await createChainSearchPool(startInputs, {
         size: workerBudget.value,
         onSuspend: gap => {
           suspendedSeconds.value += gap;
@@ -1789,11 +1816,23 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       console.warn('chain search: could not prepare storage', e);
     }
 
+    // REFUSE rather than warn. A run started against a half-loaded save produces a complete,
+    // confident, wrong answer after hours of CPU, and the operator cannot tell from the result --
+    // which is how this was found in the first place, from a CSV rather than from the app.
+    const startInputs = collectInputs();
+    const blocking = reviewRunInputs(startInputs);
+    if (blocking.length) {
+      error.value = blocking[0].message;
+      isRunning.value = false;
+      stage.value = 'idle';
+      return;
+    }
+
     holdRunLock();
     void holdScreenLock();
     document.addEventListener('visibilitychange', onVisibilityChange);
     try {
-      pool = await createChainSearchPool(collectInputs(), {
+      pool = await createChainSearchPool(startInputs, {
         size: workerBudget.value,
         onSuspend: gap => {
           suspendedSeconds.value += gap;

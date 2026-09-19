@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { reviewLegs, reviewSetup, qph, SLOW_LEG_DAYS, COLLAPSE_RATIO, TE_MISMATCH_TOLERANCE } from './health';
+import {
+  reviewContext,
+  reviewLegs,
+  reviewSetup,
+  qph,
+  SLOW_LEG_DAYS,
+  COLLAPSE_RATIO,
+  TE_MISMATCH_TOLERANCE,
+} from './health';
 import type { LegSummary } from './types';
 
 /** `maxELR` is per second; the panel and CSV both read it as q/hr. */
@@ -114,6 +122,34 @@ describe('reviewSetup', () => {
 
   it('does not add TE noise on top of a missing backup', () => {
     const issues = reviewSetup({ ...ok, hasBackup: false, currentTE: 0, backupTE: 0 });
+    expect(issues.map(i => i.kind)).toEqual(['no-backup']);
+  });
+});
+
+describe('reviewContext', () => {
+  const loaded = { hasBackup: true, hasFarmState: true, epicResearchCount: 22 };
+
+  it('is quiet once everything the workers need has loaded', () => {
+    expect(reviewContext(loaded)).toEqual([]);
+  });
+
+  // The fault this exists for. Epic research loads later than the farm state, so a run started
+  // while a backup is still arriving gets leg 1 right -- `continue` runs on currentFarmState -- and
+  // simulates every later ascension with no epic research at all. Reported as leg 2 pinned at
+  // 0.320 q/hr with tier 13 never unlocking, on runs where the CSV header and the pre-flight both
+  // looked perfect, because both re-read the stores after loading finished.
+  it('catches a run starting before epic research has loaded', () => {
+    const issues = reviewContext({ ...loaded, epicResearchCount: 0 });
+    expect(issues.map(i => i.kind)).toEqual(['no-epic-research']);
+    expect(issues[0].level).toBe('error');
+  });
+
+  it('catches a run starting before the farm state has loaded', () => {
+    expect(reviewContext({ ...loaded, hasFarmState: false }).map(i => i.kind)).toEqual(['no-farm-state']);
+  });
+
+  it('reports the missing backup alone rather than its consequences', () => {
+    const issues = reviewContext({ hasBackup: false, hasFarmState: false, epicResearchCount: 0 });
     expect(issues.map(i => i.kind)).toEqual(['no-backup']);
   });
 });
