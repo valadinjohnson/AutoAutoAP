@@ -23,7 +23,14 @@ import type { InventoryCount, LoadoutSlot } from './csv';
 
 export interface HealthIssue {
   /** Machine-readable, so the UI can style by kind rather than by matching prose. */
-  kind: 'no-backup' | 'no-artifacts' | 'no-delivery-set' | 'no-earnings-set' | 'rate-collapse' | 'slow-leg';
+  kind:
+    | 'no-backup'
+    | 'no-artifacts'
+    | 'no-delivery-set'
+    | 'no-earnings-set'
+    | 'te-mismatch'
+    | 'rate-collapse'
+    | 'slow-leg';
   /** `error` means the numbers are probably wrong. `warning` means look before you trust them. */
   level: 'error' | 'warning';
   message: string;
@@ -93,7 +100,19 @@ export interface SetupInputs {
   stones: InventoryCount[];
   delivery: LoadoutSlot[];
   earnings: LoadoutSlot[];
+  /** The TE the search will start from: the sum of the action snapshot's per-virtue totals. */
+  currentTE: number;
+  /** The TE the loaded save itself reports, summed the same way from `initialTeEarned`. */
+  backupTE: number;
 }
+
+/**
+ * Below this the two TE figures are treated as agreeing.
+ *
+ * Not zero, because a plan legitimately in progress moves the snapshot by a virtue or two and
+ * nobody needs telling about that. The failure this exists for was 22 TE.
+ */
+export const TE_MISMATCH_TOLERANCE = 3;
 
 /**
  * Review what a run is ABOUT to be given, before hours are spent on it.
@@ -132,6 +151,24 @@ export function reviewSetup(i: SetupInputs): HealthIssue[] {
       kind: 'no-earnings-set',
       level: 'warning',
       message: 'No earnings set could be solved from your inventory, so sale income will be understated.',
+    });
+  }
+
+  // THE ONE THAT CAUGHT THE REPORTED FAILURE, and the reason it took so long to find: nothing about
+  // it looks like a fault. The artifacts were right, the loadouts were right, leg 1 matched the
+  // official planner to three decimals. The search was simply told it was starting 22 TE further
+  // back than the save says, and a plan from 159 TE is about twice as long as the same plan from
+  // 181 -- which the official planner reproduces exactly when given the same wrong figure.
+  //
+  // The two numbers come from different places. The search starts from the ACTION SNAPSHOT's TE,
+  // which reflects any plan or action history currently loaded; the save reports its own per-virtue
+  // totals. A stale plan left over from an earlier session makes them disagree, and only the
+  // snapshot is visible in the result.
+  if (Math.abs(i.currentTE - i.backupTE) > TE_MISMATCH_TOLERANCE) {
+    issues.push({
+      kind: 'te-mismatch',
+      level: 'error',
+      message: `This run will start from ${i.currentTE} TE, but your loaded save reports ${i.backupTE} TE. Starting from the wrong TE changes every duration in the plan — a run from ${Math.min(i.currentTE, i.backupTE)} TE is far longer than the same run from ${Math.max(i.currentTE, i.backupTE)}. If you are not deliberately planning from a point part-way through an existing plan, reset to today's defaults or reload your backup before starting.`,
     });
   }
   return issues;

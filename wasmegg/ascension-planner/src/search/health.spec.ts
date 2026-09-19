@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { reviewLegs, reviewSetup, qph, SLOW_LEG_DAYS, COLLAPSE_RATIO } from './health';
+import { reviewLegs, reviewSetup, qph, SLOW_LEG_DAYS, COLLAPSE_RATIO, TE_MISMATCH_TOLERANCE } from './health';
 import type { LegSummary } from './types';
 
 /** `maxELR` is per second; the panel and CSV both read it as q/hr. */
@@ -67,6 +67,8 @@ describe('reviewSetup', () => {
     stones: [{ label: 'T4 Tachyon stone', count: 6 }],
     delivery: [{ artifact: 'T4L Gusset', stones: [] }],
     earnings: [{ artifact: 'T4L Lunar totem', stones: [] }],
+    currentTE: 181,
+    backupTE: 181,
   };
 
   it('is quiet when everything loaded', () => {
@@ -87,5 +89,31 @@ describe('reviewSetup', () => {
   it('treats a missing delivery set as an error and a missing earnings set as a warning', () => {
     expect(reviewSetup({ ...ok, delivery: [] })[0].level).toBe('error');
     expect(reviewSetup({ ...ok, earnings: [] })[0].level).toBe('warning');
+  });
+
+  // The reported failure, reproduced from the numbers on screen: the search planned from 159 TE
+  // while the save said 181, and nothing else about the run looked wrong. The official planner
+  // given 159 produced the same doubled duration, which is what ruled out the simulator.
+  it('catches the search starting from a different TE than the save reports', () => {
+    const issues = reviewSetup({ ...ok, currentTE: 159, backupTE: 181 });
+    expect(issues.map(i => i.kind)).toEqual(['te-mismatch']);
+    expect(issues[0].level).toBe('error');
+    expect(issues[0].message).toContain('159 TE');
+    expect(issues[0].message).toContain('181 TE');
+  });
+
+  it('catches it in either direction', () => {
+    expect(reviewSetup({ ...ok, currentTE: 181, backupTE: 159 }).map(i => i.kind)).toEqual(['te-mismatch']);
+  });
+
+  // A plan genuinely in progress nudges the snapshot. A check that fires on that is a check people
+  // switch off.
+  it('ignores a difference small enough to be an in-progress plan', () => {
+    expect(reviewSetup({ ...ok, currentTE: 181 + TE_MISMATCH_TOLERANCE, backupTE: 181 })).toEqual([]);
+  });
+
+  it('does not add TE noise on top of a missing backup', () => {
+    const issues = reviewSetup({ ...ok, hasBackup: false, currentTE: 0, backupTE: 0 });
+    expect(issues.map(i => i.kind)).toEqual(['no-backup']);
   });
 });

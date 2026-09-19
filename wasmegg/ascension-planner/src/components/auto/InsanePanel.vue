@@ -129,9 +129,21 @@
                 {{ formatSoulEggs(store.setupFacts.soulEggs) }}
               </dd>
             </div>
+            <!-- Both numbers, side by side, because the reported failure was exactly these two
+                 disagreeing and only one of them being visible anywhere. -->
             <div>
-              <dt class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Your TE now</dt>
-              <dd class="font-bold text-slate-700">{{ store.setupFacts.currentTE }}</dd>
+              <dt class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Starting TE</dt>
+              <dd
+                class="font-bold"
+                :class="
+                  Math.abs(store.setupFacts.currentTE - store.setupFacts.backupTE) > 3
+                    ? 'text-rose-700'
+                    : 'text-slate-700'
+                "
+              >
+                {{ store.setupFacts.currentTE }}
+                <span class="font-normal text-slate-400">· save says {{ store.setupFacts.backupTE }}</span>
+              </dd>
             </div>
             <div>
               <dt class="text-[9px] font-black text-slate-400 uppercase tracking-widest">Epic research</dt>

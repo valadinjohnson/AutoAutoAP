@@ -455,6 +455,20 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     return (Object.values(snapshot.teEarned) as number[]).reduce((a, b) => a + b, 0);
   });
 
+  /**
+   * The TE the LOADED SAVE reports, as opposed to the TE the search will start from.
+   *
+   * `currentTE` above sums the action snapshot, which reflects whatever plan or action history is
+   * loaded; this sums `initialTeEarned`, which the backup reader writes straight from the save.
+   * They are normally the same number twice. When they are not, the search is planning from a
+   * different account than the one you are looking at -- see the `te-mismatch` check in
+   * search/health.ts, which is the fault that prompted all of this.
+   */
+  const backupTE = computed(() => {
+    const earned = useInitialStateStore().initialTeEarned;
+    return earned ? (Object.values(earned) as number[]).reduce((a, b) => a + b, 0) : 0;
+  });
+
   /** Plan start, taken from the Auto Planner tab's own scheduling inputs so the two agree. A plan's
    *  duration depends on (chain, plan start) jointly — comparing chains scored from different
    *  starts is meaningless, which is why the whole run pins one. */
@@ -951,9 +965,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
    * can agree with the real one right up until the day it does not.
    */
   const setupIssues = computed<HealthIssue[]>(() => {
-    if (!getSimulationContext().rawBackup) {
-      return reviewSetup({ hasBackup: false, artifacts: [], stones: [], delivery: [], earnings: [] });
-    }
+    const blank = { artifacts: [], stones: [], delivery: [], earnings: [], currentTE: 0, backupTE: 0 };
+    if (!getSimulationContext().rawBackup) return reviewSetup({ hasBackup: false, ...blank });
     const inv = readInventory();
     return reviewSetup({
       hasBackup: true,
@@ -961,6 +974,8 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       stones: inv.stones,
       delivery: describeLoadoutSlots(inv.elr),
       earnings: describeLoadoutSlots(inv.earnings),
+      currentTE: currentTE.value,
+      backupTE: backupTE.value,
     });
   });
 
@@ -992,6 +1007,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
       epicTotal: epic?.total ?? 0,
       colleggtibles: raw ? (summariseColleggtibles(getColleggtibleTiers(raw))?.total ?? 0) : 0,
       currentTE: currentTE.value,
+      backupTE: backupTE.value,
     };
   });
 
@@ -2069,6 +2085,7 @@ export const useChainSearchStore = defineStore('chainSearch', () => {
     searchSpace,
     setupIssues,
     setupFacts,
+    backupTE,
     resultIssues,
     openedRun,
     crashedRun,
